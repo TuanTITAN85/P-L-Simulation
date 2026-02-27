@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from "react";
+import * as XLSX from "xlsx";
 
 // Type definitions
 interface Location {
@@ -1506,31 +1507,59 @@ const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenProps) =>
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const { headers, rows } = parseFile(ev.target?.result as string);
-        // Find unique project codes
-        const codeCol = headers.find(h => /project.?code/i.test(h)) || "";
-        const codes = [...new Set(rows.map(r => (r[codeCol] || "").trim()).filter(Boolean))].sort();
-        if (codes.length === 0) {
-          showToast("Không tìm thấy cột 'Project Code' trong file", "error");
-          e.target.value = ""; return;
-        }
-        setStaged({ fileName: file.name, allRows: rows, codes, headers });
-        // Auto-select defaults
-        const pc = project.code.trim();
-        if (activeTab === "supplier") {
-          const defaults = codes.filter(c => c === pc || c.startsWith("SCD_") || c.toLowerCase() === pc.toLowerCase());
-          setSelCodes(defaults.length > 0 ? defaults : [codes[0]]);
-        } else {
-          const match = codes.find(c => c === pc || c.toLowerCase() === pc.toLowerCase());
-          setSelCodes(match ? [match] : [codes[0]]);
-        }
-      } catch { showToast(t.importError, "error"); }
-      e.target.value = "";
+
+    const processRows = (headers: string[], rows: Record<string, string>[]) => {
+      const codeCol = headers.find(h => /project.?code/i.test(h)) || "";
+      const codes = [...new Set(rows.map(r => (r[codeCol] || "").trim()).filter(Boolean))].sort();
+      if (codes.length === 0) {
+        showToast("Không tìm thấy cột 'Project Code' trong file", "error");
+        return;
+      }
+      setStaged({ fileName: file.name, allRows: rows, codes, headers });
+      const pc = project.code.trim();
+      if (activeTab === "supplier") {
+        const defaults = codes.filter(c => c === pc || c.startsWith("SCD_") || c.toLowerCase() === pc.toLowerCase());
+        setSelCodes(defaults.length > 0 ? defaults : [codes[0]]);
+      } else {
+        const match = codes.find(c => c === pc || c.toLowerCase() === pc.toLowerCase());
+        setSelCodes(match ? [match] : [codes[0]]);
+      }
     };
-    reader.readAsText(file);
+
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+    const reader = new FileReader();
+
+    if (isExcel) {
+      reader.onload = (ev) => {
+        try {
+          const wb = XLSX.read(new Uint8Array(ev.target?.result as ArrayBuffer), { type: "array" });
+          const ws = wb.Sheets["Sheet1"];
+          if (!ws) { showToast("Không tìm thấy sheet 'Sheet1' trong file", "error"); e.target.value = ""; return; }
+          const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
+          if (aoa.length < 4) { showToast("File không đủ dữ liệu (cần ít nhất 4 dòng)", "error"); e.target.value = ""; return; }
+          // Headers at row 3 (index 2), data from row 4 (index 3)
+          const headers = aoa[2].map(h => String(h).trim());
+          const dataRows = aoa.slice(3).filter(row => row.some(cell => cell !== ""));
+          const rows: Record<string, string>[] = dataRows.map(cols => {
+            const row: Record<string, string> = {};
+            headers.forEach((h, i) => { row[h] = String(cols[i] ?? "").trim(); });
+            return row;
+          });
+          processRows(headers, rows);
+        } catch { showToast(t.importError, "error"); }
+        e.target.value = "";
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (ev) => {
+        try {
+          const { headers, rows } = parseFile(ev.target?.result as string);
+          processRows(headers, rows);
+        } catch { showToast(t.importError, "error"); }
+        e.target.value = "";
+      };
+      reader.readAsText(file);
+    }
   };
 
   const getPreview = () => {
@@ -1573,7 +1602,7 @@ const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenProps) =>
       <div className="flex items-center justify-between mb-5">
         <h3 className="text-lg font-bold text-white">{t.actualData}</h3>
         <button onClick={() => fileRef.current?.click()} className="px-4 py-2 bg-teal-700 hover:bg-teal-600 rounded-lg text-sm">📤 {t.importActual}</button>
-        <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleFileSelect} />
+        <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,.xls,.xlsx" className="hidden" onChange={handleFileSelect} />
       </div>
 
       {/* Tabs */}
