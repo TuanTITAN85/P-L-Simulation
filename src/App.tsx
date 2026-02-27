@@ -27,6 +27,10 @@ interface AdminConfig {
   locations: Location[];
   costRef: CostRef;
   otherCostCats: string[];
+  lastUpdatedRoles?: string;
+  lastUpdatedContracts?: string;
+  lastUpdatedLocations?: string;
+  lastUpdatedOtherCats?: string;
 }
 
 interface OtherCostItem {
@@ -286,6 +290,31 @@ const uid = (): number => Date.now() + Math.random();
 const today = (): string => new Date().toISOString().split("T")[0];
 const mColor = (m: number, tgt: number): string => m >= tgt ? "text-green-400" : m >= tgt * 0.8 ? "text-yellow-400" : "text-red-400";
 const mBg = (m: number, tgt: number): string => m >= tgt ? "bg-green-500" : m >= tgt * 0.8 ? "bg-yellow-500" : "bg-red-500";
+// P9 = highest level (senior), P1 = lowest (junior). Pyramid: base(P1-P3) > belly(P4-P6) > top(P7-P9)
+const analyzePyramid = (ceData: Record<string, Record<string, string>> | undefined, locs: Location[]): { status: "ok" | "warning" | "info"; message: string } => {
+  const totByPkg = PACKAGES.map(p => (locs || DEFAULT_LOCS).reduce((s, l) => s + (parseFloat(ceData?.[l.code]?.[p] || "") || 0), 0));
+  const grand = totByPkg.reduce((s, v) => s + v, 0);
+  if (grand === 0) return { status: "info", message: "Chưa có dữ liệu effort để phân tích cơ cấu nguồn lực." };
+  // P7,P8,P9 = high level (top); P4,P5,P6 = mid (belly); P1,P2,P3 = entry (base)
+  const base = totByPkg[0] + totByPkg[1] + totByPkg[2];
+  const belly = totByPkg[3] + totByPkg[4] + totByPkg[5];
+  const top = totByPkg[6] + totByPkg[7] + totByPkg[8];
+  const topPct = grand > 0 ? (top / grand) * 100 : 0;
+  const bellyPct = grand > 0 ? (belly / grand) * 100 : 0;
+  const basePct = grand > 0 ? (base / grand) * 100 : 0;
+  const warnings: string[] = [];
+  if (top > belly) warnings.push(`Đỉnh tháp (P7-P9: ${top.toFixed(1)} MM) lớn hơn thân tháp (P4-P6: ${belly.toFixed(1)} MM)`);
+  if (top > base) warnings.push(`Đỉnh tháp (P7-P9: ${top.toFixed(1)} MM) lớn hơn chân tháp (P1-P3: ${base.toFixed(1)} MM)`);
+  if (topPct > 40) warnings.push(`Level cao (P7-P9) chiếm ${topPct.toFixed(0)}% tổng effort — quá cao`);
+  if (warnings.length > 0) return {
+    status: "warning",
+    message: `⚠️ Cơ cấu nguồn lực chưa hợp lý: ${warnings.join("; ")}. Tỷ trọng hiện tại — Chân (P1-P3): ${basePct.toFixed(0)}% | Thân (P4-P6): ${bellyPct.toFixed(0)}% | Đỉnh (P7-P9): ${topPct.toFixed(0)}%. Cần điều chỉnh để đỉnh tháp < thân < chân tháp.`
+  };
+  return {
+    status: "ok",
+    message: `✅ Cơ cấu nguồn lực hình tháp hợp lý — Chân (P1-P3): ${basePct.toFixed(0)}% | Thân (P4-P6): ${bellyPct.toFixed(0)}% | Đỉnh (P7-P9): ${topPct.toFixed(0)}%.`
+  };
+};
 
 const defCE = (locs?: Location[]): Record<string, Record<string, string>> => { 
   const m: Record<string, Record<string, string>> = {}; 
@@ -314,7 +343,7 @@ const defCostRef = (): CostRef => ({
   Supplier: { salary: { table: buildTable(SUPPLIER_SAL), unit: "USD", lastUpdated: today() }, insurance: null },
 });
 const defAdmin = (): AdminConfig => ({
-  targetGrossMargin: 25, targetDirectMargin: 20, projectIncomePct: 30,
+  targetGrossMargin: 40, targetDirectMargin: 54, projectIncomePct: 30,
   roles: [...DEFAULT_ROLES], contractTypes: [...DEFAULT_CONTRACTS],
   locations: DEFAULT_LOCS.map(l => ({ ...l, active: true })),
   costRef: defCostRef(),
@@ -484,16 +513,24 @@ const OtherCostsTab = ({ items, onChange, cats, t }: OtherCostsTabProps) => {
   const updItem = (id: number, field: keyof OtherCostItem, val: string) => onChange(items.map(it => it.id === id ? { ...it, [field]: val } : it));
   const delItem = (id: number) => onChange(items.filter(it => it.id !== id));
   const total = items.reduce((s, it) => s + (parseFloat(it.unitPrice) || 0) * (parseFloat(it.qty) || 0) * (parseFloat(it.months) || 0), 0);
+  const grouped = useMemo(() => {
+    const m: Record<string, number> = {};
+    items.forEach(it => {
+      const amt = (parseFloat(it.unitPrice) || 0) * (parseFloat(it.qty) || 0) * (parseFloat(it.months) || 0);
+      if (amt > 0) m[it.category] = (m[it.category] || 0) + amt;
+    });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [items]);
   return (
     <div className="space-y-4">
       <div className="overflow-x-auto rounded-xl border border-gray-800">
         <table className="w-full text-xs">
           <thead><tr className="bg-gray-800 border-b border-gray-700">
             <th className="text-left py-3 px-3 text-gray-400 min-w-36">{t.category}</th>
-            <th className="text-right py-3 px-3 text-gray-400 min-w-28">{t.unitPrice}</th>
+            <th className="text-right py-3 px-3 text-gray-400 min-w-28">{t.unitPrice} (USD)</th>
             <th className="text-right py-3 px-3 text-gray-400 min-w-20">{t.qty}</th>
             <th className="text-right py-3 px-3 text-gray-400 min-w-20">{t.months}</th>
-            <th className="text-right py-3 px-3 text-gray-400 min-w-28">{t.amount}</th>
+            <th className="text-right py-3 px-3 text-gray-400 min-w-28">{t.amount} (USD)</th>
             <th className="text-left py-3 px-3 text-gray-400 min-w-32">{t.note}</th>
             <th className="py-3 px-2 w-8"></th>
           </tr></thead>
@@ -507,7 +544,7 @@ const OtherCostsTab = ({ items, onChange, cats, t }: OtherCostsTabProps) => {
                   <td className="py-1.5 px-2"><Inp type="number" value={it.unitPrice} onChange={v => updItem(it.id, "unitPrice", v)} placeholder="0" /></td>
                   <td className="py-1.5 px-2"><Inp type="number" value={it.qty} onChange={v => updItem(it.id, "qty", v)} placeholder="1" /></td>
                   <td className="py-1.5 px-2"><Inp type="number" value={it.months} onChange={v => updItem(it.id, "months", v)} placeholder="1" /></td>
-                  <td className="py-1.5 px-2"><div className="text-right font-semibold text-green-300 py-2 pr-1">{fmt(amt)}</div></td>
+                  <td className="py-1.5 px-2"><div className="text-right font-semibold text-green-300 py-2 pr-1">${fmt(amt)}</div></td>
                   <td className="py-1.5 px-2"><Inp value={it.note} onChange={v => updItem(it.id, "note", v)} placeholder="..." /></td>
                   <td className="py-1.5 px-2 text-center"><button onClick={() => delItem(it.id)} className="text-gray-600 hover:text-red-400">✕</button></td>
                 </tr>
@@ -520,9 +557,34 @@ const OtherCostsTab = ({ items, onChange, cats, t }: OtherCostsTabProps) => {
         <button onClick={addItem} className="px-3 py-2 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-sm">+ {t.addItem}</button>
         <div className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-2">
           <span className="text-sm text-gray-400">{t.otherTotalCost}:</span>
-          <span className="text-lg font-bold text-green-300">{fmt(total)}</span>
+          <span className="text-lg font-bold text-green-300">${fmt(total)} USD</span>
         </div>
       </div>
+      {grouped.length > 0 && (
+        <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+          <div className="px-4 py-2 bg-gray-800 border-b border-gray-700">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">📦 Tổng hợp theo danh mục</p>
+          </div>
+          <div className="p-3 space-y-1">
+            {grouped.map(([cat, amt]) => (
+              <div key={cat} className="flex items-center justify-between py-1.5 border-b border-gray-800/60">
+                <span className="text-sm text-gray-300">{cat}</span>
+                <div className="flex items-center gap-3">
+                  <div className="h-1.5 w-20 bg-gray-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${total > 0 ? (amt / total) * 100 : 0}%` }} />
+                  </div>
+                  <span className="text-xs text-gray-500 w-10 text-right">{total > 0 ? ((amt / total) * 100).toFixed(0) : 0}%</span>
+                  <span className="font-semibold text-green-300 text-sm w-28 text-right">${fmt(amt)}</span>
+                </div>
+              </div>
+            ))}
+            <div className="flex justify-between pt-2">
+              <span className="text-sm font-bold text-white">Tổng</span>
+              <span className="font-bold text-green-300">${fmt(total)} USD</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -780,6 +842,8 @@ const VNCostSection = ({ label, color, sk, phaseKey, data, pl, updSec, locations
   const bdr = color === "indigo" ? "border-indigo-800" : "border-purple-800";
   const bg = color === "indigo" ? "bg-indigo-950/30" : "bg-purple-950/30";
   const tc = color === "indigo" ? "text-indigo-300" : "text-purple-300";
+  const empPyramid = useMemo(() => analyzePyramid(data?.ceEMP, locs), [data?.ceEMP, locs]);
+  const appPyramid = useMemo(() => analyzePyramid(data?.ceAPP, locs), [data?.ceAPP, locs]);
   return (
     <div className={`rounded-xl border ${bdr} overflow-hidden`}>
       <div className={`px-5 py-3 ${bg} flex items-center justify-between`}>
@@ -788,7 +852,17 @@ const VNCostSection = ({ label, color, sk, phaseKey, data, pl, updSec, locations
       </div>
       <div className="p-5 space-y-4">
         <CEMatrix label={`${t.calEffortEMP} (MM)`} ceData={data?.ceEMP} onChange={(l, p, v) => upd("EMP", l, p, v)} locations={locs} t={t} />
+        {empPyramid.status !== "info" && (
+          <div className={`rounded-lg px-3 py-2 text-xs flex gap-2 items-start ${empPyramid.status === "warning" ? "bg-yellow-950/60 border border-yellow-700/60 text-yellow-300" : "bg-green-950/60 border border-green-700/60 text-green-300"}`}>
+            <span className="shrink-0">🤖 AI:</span><span>{empPyramid.message}</span>
+          </div>
+        )}
         <CEMatrix label={`${t.calEffortAPP} (MM)`} ceData={data?.ceAPP} onChange={(l, p, v) => upd("APP", l, p, v)} locations={locs} t={t} />
+        {appPyramid.status !== "info" && (
+          <div className={`rounded-lg px-3 py-2 text-xs flex gap-2 items-start ${appPyramid.status === "warning" ? "bg-yellow-950/60 border border-yellow-700/60 text-yellow-300" : "bg-green-950/60 border border-green-700/60 text-green-300"}`}>
+            <span className="shrink-0">🤖 AI:</span><span>{appPyramid.message}</span>
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-3 bg-gray-800 rounded-xl p-4">
           <AutoField label={t.empSalaryCost} value={fmt(pl?.empCost)} note="auto" />
           <AutoField label={t.appSalaryCost} value={fmt(pl?.appCost)} note="auto" />
@@ -863,9 +937,10 @@ interface PhasePanelProps {
 const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData, updSec, updField, admin, t }: PhasePanelProps) => {
   const [tab, setTab] = useState("info");
   const locs = admin.locations || DEFAULT_LOCS;
-  const tgt_g = admin.targetGrossMargin || 25;
-  const tgt_d = admin.targetDirectMargin || 20;
+  const tgt_g = admin.targetGrossMargin || 40;
+  const tgt_d = admin.targetDirectMargin || 54;
   const cats = admin.otherCostCats || DEFAULT_OTHER_COST_CATS;
+  const currency = phaseData?.currency || "USD";
 
   const fcInfo = useMemo(() => {
     if (!isForecast) return null;
@@ -881,6 +956,21 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
     const upOns = planOns > 0 ? planOnsRev / planOns : 0;
     return { fcOff, fcOns, offRev: (fcOff * upOff).toFixed(0), onsRev: (fcOns * upOns).toFixed(0), actOffMM, actOnsMM, upOff, upOns };
   }, [isForecast, planData, actualData]);
+
+  const planPL = useMemo(() => isForecast ? calcPhase(planData, admin) : null, [isForecast, planData, admin]);
+
+  const combinedMetrics = useMemo(() => {
+    if (!isForecast || !fcInfo || !planPL) return null;
+    const actRev = fcInfo.actOffMM * fcInfo.upOff + fcInfo.actOnsMM * fcInfo.upOns;
+    const planMM = (parseFloat(planData?.offshore?.billableMM || "") || 0) + (parseFloat(planData?.onsite?.billableMM || "") || 0);
+    const actMM = fcInfo.actOffMM + fcInfo.actOnsMM;
+    const actCost = planMM > 0 ? planPL.totalCost * (actMM / planMM) : 0;
+    const combinedRev = actRev + pl.totalRev;
+    const combinedCost = actCost + pl.totalCost;
+    const combinedGP = combinedRev - combinedCost;
+    const combinedGM = combinedRev > 0 ? (combinedGP / combinedRev) * 100 : 0;
+    return { actRev, actCost, fcRev: pl.totalRev, fcCost: pl.totalCost, combinedRev, combinedCost, combinedGP, combinedGM };
+  }, [isForecast, fcInfo, planPL, planData, pl]);
 
   const tabs = [{ key: "info", label: t.projectInfo }, { key: "prime", label: "🏢 Prime" }, { key: "supplier", label: "🤝 Supplier" }, { key: "onsite", label: "🏙️ Onsite" }, { key: "other", label: `💡 ${t.otherCosts}` }, { key: "pl", label: `📊 P&L` }];
 
@@ -912,13 +1002,20 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
       {tab === "other" && <OtherCostsTab items={phaseData?.otherCosts || []} onChange={items => updField(phaseKey, "otherCosts", items)} cats={cats} t={t} />}
       {tab === "pl" && (
         <div className="space-y-4">
+          {/* Forecast Remaining Section (always shown) */}
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              {isForecast ? "📋 Forecast Remaining" : "📋 P&L Summary"}
+            </span>
+            <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded">{currency}</span>
+          </div>
           <div className="grid grid-cols-3 gap-3">
             {([[t.offshoreTeam, pl?.offRev, "blue"], [t.onsiteTeam, pl?.onsRev, "purple"], [t.totalRevenue, pl?.totalRev, "white"]] as const).map(([lb, v, c]) => (
-              <div key={lb} className="bg-gray-800 rounded-xl p-4 text-center"><p className="text-xs text-gray-500 mb-1">{lb}</p><p className={`text-base font-bold text-${c}-400`}>{fmt(v)}</p></div>
+              <div key={lb} className="bg-gray-800 rounded-xl p-4 text-center"><p className="text-xs text-gray-500 mb-1">{lb}</p><p className={`text-base font-bold text-${c}-400`}>${fmt(v)}</p></div>
             ))}
           </div>
           <div className="bg-gray-800 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Cost Breakdown</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Cost Breakdown ({currency})</p>
             <div className="space-y-1 divide-y divide-gray-700">
               <SummaryRow label={t.primeTotalCost} value={pl?.primePL?.total} />
               <SummaryRow label={t.supplierTotalCost} value={pl?.supplierPL?.total} />
@@ -929,13 +1026,86 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
           </div>
           <div className="bg-gray-800 rounded-xl p-4 space-y-2">
             {([[t.totalRevenue, pl?.totalRev, "text-blue-400"], [t.totalCost, pl?.totalCost, "text-orange-400"], [t.grossProfit, pl?.grossProfit, (pl?.grossProfit || 0) >= 0 ? "text-green-400" : "text-red-400"]] as const).map(([lb, v, cls]) => (
-              <div key={lb} className="flex justify-between border-b border-gray-700 pb-2"><span className="text-sm text-gray-400">{lb}</span><span className={`font-bold ${cls}`}>{fmt(v)}</span></div>
+              <div key={lb} className="flex justify-between border-b border-gray-700 pb-2"><span className="text-sm text-gray-400">{lb}</span><span className={`font-bold ${cls}`}>${fmt(v)}</span></div>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <MarginCard label={t.grossMargin} value={pl?.grossMargin || 0} target={tgt_g} t={t} />
             <MarginCard label={t.directMargin} value={pl?.directMargin || 0} target={tgt_d} t={t} />
           </div>
+
+          {/* Combined Actual + Forecast Section (only in forecast phase) */}
+          {isForecast && combinedMetrics && (
+            <div className="mt-2 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">🔀 Tổng dự kiến (Actual + Forecast)</span>
+                <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded">{currency}</span>
+              </div>
+              {/* Revenue breakdown */}
+              <div className="bg-gray-900 rounded-xl border border-teal-800/50 overflow-hidden">
+                <div className="px-4 py-2 bg-teal-950/40 border-b border-teal-800/40">
+                  <p className="text-xs font-semibold text-teal-400">Doanh thu ({currency})</p>
+                </div>
+                <div className="p-3">
+                  <div className="grid grid-cols-3 gap-3 mb-2">
+                    {[
+                      { label: "Actual Revenue", val: combinedMetrics.actRev, cls: "text-emerald-400" },
+                      { label: "Forecast Revenue", val: combinedMetrics.fcRev, cls: "text-blue-400" },
+                      { label: "Tổng Revenue", val: combinedMetrics.combinedRev, cls: "text-white" },
+                    ].map(item => (
+                      <div key={item.label} className="bg-gray-800 rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500 mb-1">{item.label}</p>
+                        <p className={`text-sm font-bold ${item.cls}`}>${fmt(item.val)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {/* Cost breakdown */}
+              <div className="bg-gray-900 rounded-xl border border-orange-800/50 overflow-hidden">
+                <div className="px-4 py-2 bg-orange-950/40 border-b border-orange-800/40">
+                  <p className="text-xs font-semibold text-orange-400">Chi phí ({currency})</p>
+                </div>
+                <div className="p-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: "Actual Cost (est.)", val: combinedMetrics.actCost, cls: "text-orange-400" },
+                      { label: "Forecast Cost", val: combinedMetrics.fcCost, cls: "text-yellow-400" },
+                      { label: "Tổng Cost", val: combinedMetrics.combinedCost, cls: "text-white" },
+                    ].map(item => (
+                      <div key={item.label} className="bg-gray-800 rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500 mb-1">{item.label}</p>
+                        <p className={`text-sm font-bold ${item.cls}`}>${fmt(item.val)}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2 px-1">* Actual Cost được ước tính theo tỷ lệ Actual MM / Planning MM × Planning Total Cost</p>
+                </div>
+              </div>
+              {/* Combined P&L */}
+              <div className="bg-gray-900 rounded-xl border border-teal-700/60 p-4 space-y-2">
+                <p className="text-xs font-semibold text-teal-300 mb-3">Kết quả tổng hợp (Actual + Forecast)</p>
+                {[
+                  { lb: "Tổng Revenue", val: combinedMetrics.combinedRev, cls: "text-blue-400" },
+                  { lb: "Tổng Cost", val: combinedMetrics.combinedCost, cls: "text-orange-400" },
+                  { lb: "Gross Profit", val: combinedMetrics.combinedGP, cls: combinedMetrics.combinedGP >= 0 ? "text-green-400" : "text-red-400" },
+                ].map(row => (
+                  <div key={row.lb} className="flex justify-between border-b border-gray-800 pb-2">
+                    <span className="text-sm text-gray-400">{row.lb}</span>
+                    <span className={`font-bold ${row.cls}`}>${fmt(row.val)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between pt-1">
+                  <span className="text-sm font-bold text-teal-300">Gross Margin (Combined)</span>
+                  <span className={`text-lg font-black ${mColor(combinedMetrics.combinedGM, tgt_g)}`}>{pct(combinedMetrics.combinedGM)}%</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <MarginCard label="Combined Gross Margin" value={combinedMetrics.combinedGM} target={tgt_g} t={t} />
+                <MarginCard label="Forecast-only Margin" value={pl?.grossMargin || 0} target={tgt_g} t={t} />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -999,17 +1169,47 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
   const planPL = useMemo(() => calcPhase(d?.planning, admin), [d?.planning, admin]);
   const fcPL = useMemo(() => calcPhase(d?.forecast, admin), [d?.forecast, admin]);
   const activePL = phase === "planning" ? planPL : fcPL;
-  const tgt_g = admin.targetGrossMargin || 25;
-  const tgt_d = admin.targetDirectMargin || 20;
+  const tgt_g = admin.targetGrossMargin || 40;
+  const tgt_d = admin.targetDirectMargin || 54;
   const stl = (key: string): string => SIM_TYPES.find(s => s.key === key)?.vi || key;
+
+  const combinedFcMetrics = useMemo(() => {
+    if (phase !== "forecast") return null;
+    const planData = d?.planning;
+    const actualData = project.actualData;
+    const planOff = parseFloat(planData?.offshore?.billableMM || "") || 0;
+    const planOns = parseFloat(planData?.onsite?.billableMM || "") || 0;
+    const planOffRev = parseFloat(planData?.offshore?.wipRevenue || "") || 0;
+    const planOnsRev = parseFloat(planData?.onsite?.wipRevenue || "") || 0;
+    const actOffMM = (actualData?.prime || []).reduce((s, e) => s + (e.offshoreActualMM || 0), 0);
+    const actOnsMM = (actualData?.prime || []).reduce((s, e) => s + (e.onsiteActualMM || 0), 0);
+    const upOff = planOff > 0 ? planOffRev / planOff : 0;
+    const upOns = planOns > 0 ? planOnsRev / planOns : 0;
+    const actRev = actOffMM * upOff + actOnsMM * upOns;
+    const planMM = planOff + planOns;
+    const actMM = actOffMM + actOnsMM;
+    const actCost = planMM > 0 ? planPL.totalCost * (actMM / planMM) : 0;
+    const combinedRev = actRev + fcPL.totalRev;
+    const combinedCost = actCost + fcPL.totalCost;
+    const combinedGP = combinedRev - combinedCost;
+    const combinedGM = combinedRev > 0 ? (combinedGP / combinedRev) * 100 : 0;
+    return { combinedGM, combinedDM: combinedGM };
+  }, [phase, d?.planning, project.actualData, planPL, fcPL]);
+
+  const displayGM = phase === "forecast" && combinedFcMetrics ? combinedFcMetrics.combinedGM : activePL.grossMargin;
+  const displayDM = phase === "forecast" && combinedFcMetrics ? combinedFcMetrics.combinedDM : activePL.directMargin;
+
   return (
     <div className="flex flex-col h-full">
       <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-3 flex-wrap">
         <button onClick={onBack} className="text-sm text-gray-500 hover:text-white">← {t.back}</button>
         <div className="flex-1 min-w-0"><span className="text-white font-semibold">{project.code} — {project.name}</span><span className="text-gray-500 text-sm ml-2">{stl(version.type)} · {version.date}</span></div>
         <div className="flex items-center gap-4">
-          {([[t.grossMargin, activePL.grossMargin, tgt_g], [t.directMargin, activePL.directMargin, tgt_d]] as const).map(([lb, v, tgt]) => (
-            <div key={lb} className="text-center"><div className="text-xs text-gray-500">{lb}</div><div className={`text-lg font-black ${mColor(v, tgt)}`}>{pct(v)}%</div></div>
+          {([[t.grossMargin, displayGM, tgt_g], [t.directMargin, displayDM, tgt_d]] as const).map(([lb, v, tgt]) => (
+            <div key={lb} className="text-center">
+              <div className="text-xs text-gray-500">{lb}{phase === "forecast" && combinedFcMetrics ? " (combined)" : ""}</div>
+              <div className={`text-lg font-black ${mColor(v, tgt)}`}>{pct(v)}%</div>
+            </div>
           ))}
         </div>
       </div>
@@ -1073,7 +1273,15 @@ const CostRefTable = ({ config, setConfig, t }: CostRefTableProps) => {
       <div className="flex gap-1 mb-4 bg-gray-800 rounded-lg p-1 w-fit">
         {([{ key: "salary" as const, label: `💰 ${t.salaryRef}` }, { key: "insurance" as const, label: `🏥 ${t.insuranceRef}` }]).map(tb => <button key={tb.key} onClick={() => { setActiveSub(tb.key); setEditing(false); }} className={`px-4 py-1.5 rounded text-sm font-medium transition ${activeSub === tb.key ? "bg-gray-700 text-white" : "text-gray-500"}`}>{tb.label}</button>)}
       </div>
-      {!isShared && <div className="flex items-center justify-between mb-3">{!editing ? <button onClick={startEdit} className="px-4 py-2 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-sm">✏️ {t.editMode}</button> : <><button onClick={saveEdit} className="px-4 py-2 bg-green-700 rounded-lg text-sm">💾 {t.save}</button><button onClick={cancelEdit} className="px-3 py-2 bg-gray-700 rounded-lg text-sm">{t.cancel}</button></>}</div>}
+      {isShared && cur.lastUpdated && <p className="text-xs text-gray-500 mb-3">🕐 {t.lastUpdated}: {cur.lastUpdated} <span className="text-gray-600">({t.sharedIns})</span></p>}
+      {!isShared && (
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            {!editing ? <button onClick={startEdit} className="px-4 py-2 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-sm">✏️ {t.editMode}</button> : <><button onClick={saveEdit} className="px-4 py-2 bg-green-700 rounded-lg text-sm">💾 {t.save}</button><button onClick={cancelEdit} className="px-3 py-2 bg-gray-700 rounded-lg text-sm">{t.cancel}</button></>}
+          </div>
+          {cur.lastUpdated && <span className="text-xs text-gray-500">🕐 {t.lastUpdated}: {cur.lastUpdated}</span>}
+        </div>
+      )}
       <div className="overflow-x-auto rounded-xl border border-gray-800">
         <table className="w-full text-xs">
           <thead><tr className="bg-gray-800 border-b border-gray-700"><th className="text-left py-3 px-4 text-gray-400 font-semibold sticky left-0 bg-gray-800">{t.location}</th>{PACKAGES.map(p => <th key={p} className="text-center py-3 px-2 text-gray-300 font-bold">{p}</th>)}</tr></thead>
@@ -1251,15 +1459,139 @@ interface AdminScreenProps {
 
 const AdminScreen = ({ config, setConfig, t }: AdminScreenProps) => {
   const [tab, setTab] = useState("target");
-  const tabs = [{ key: "target", icon: "🎯", label: t.targetSettings }, { key: "roles", icon: "👤", label: t.rolesConfig }, { key: "costref", icon: "💰", label: t.costRefConfig }, { key: "income", icon: "🎁", label: t.projectIncomeConfig }];
+  const tabs = [
+    { key: "target", icon: "🎯", label: t.targetSettings },
+    { key: "roles", icon: "👤", label: t.rolesConfig },
+    { key: "contracts", icon: "📄", label: t.contractConfig },
+    { key: "locations", icon: "📍", label: t.locationConfig },
+    { key: "othercats", icon: "📦", label: t.otherCostCatsConfig },
+    { key: "costref", icon: "💰", label: t.costRefConfig },
+    { key: "income", icon: "🎁", label: t.projectIncomeConfig },
+  ];
+  const TS = ({ ts }: { ts?: string }) => ts ? (
+    <span className="text-xs text-gray-500">🕐 {t.lastUpdated}: {ts}</span>
+  ) : null;
+  const [newLoc, setNewLoc] = useState({ code: "", nameVi: "", nameEn: "" });
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <h2 className="text-xl font-bold text-white mb-6">{t.adminTitle}</h2>
-      <div className="flex gap-1 mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800">{tabs.map(tb => <button key={tb.key} onClick={() => setTab(tb.key)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === tb.key ? "bg-gray-700 text-white" : "text-gray-500"}`}>{tb.icon} {tb.label}</button>)}</div>
-      {tab === "target" && <Card title={t.targetSettings}><div className="grid grid-cols-2 gap-6"><div className="bg-gray-800 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetGM}</label><Inp type="number" value={config.targetGrossMargin} onChange={v => setConfig(c => ({ ...c, targetGrossMargin: parseFloat(v) || 0 }))} /></div><div className="bg-gray-800 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetDM}</label><Inp type="number" value={config.targetDirectMargin} onChange={v => setConfig(c => ({ ...c, targetDirectMargin: parseFloat(v) || 0 }))} /></div></div></Card>}
-      {tab === "roles" && <Card title={t.rolesConfig}><div className="space-y-2 mb-4">{config.roles.map((r, i) => <div key={i} className="flex gap-2"><Inp value={r} onChange={v => setConfig(c => ({ ...c, roles: c.roles.map((x, j) => j === i ? v : x) }))} /><button onClick={() => setConfig(c => ({ ...c, roles: c.roles.filter((_, j) => j !== i) }))} className="text-gray-600 hover:text-red-400 px-2">✕</button></div>)}</div><button onClick={() => setConfig(c => ({ ...c, roles: [...c.roles, ""] }))} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">+ {t.addRole}</button></Card>}
+      <div className="flex flex-wrap gap-1 mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800">
+        {tabs.map(tb => <button key={tb.key} onClick={() => setTab(tb.key)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === tb.key ? "bg-gray-700 text-white" : "text-gray-500"}`}>{tb.icon} {tb.label}</button>)}
+      </div>
+
+      {tab === "target" && (
+        <Card title={t.targetSettings}>
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-gray-800 rounded-xl p-4">
+              <label className="text-xs text-gray-500 mb-1 block">{t.targetGM}</label>
+              <div className="flex items-center gap-2"><Inp type="number" value={config.targetGrossMargin} onChange={v => setConfig(c => ({ ...c, targetGrossMargin: parseFloat(v) || 0 }))} /><span className="text-gray-400 text-sm">%</span></div>
+            </div>
+            <div className="bg-gray-800 rounded-xl p-4">
+              <label className="text-xs text-gray-500 mb-1 block">{t.targetDM}</label>
+              <div className="flex items-center gap-2"><Inp type="number" value={config.targetDirectMargin} onChange={v => setConfig(c => ({ ...c, targetDirectMargin: parseFloat(v) || 0 }))} /><span className="text-gray-400 text-sm">%</span></div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {tab === "roles" && (
+        <Card title={t.rolesConfig} action={<TS ts={config.lastUpdatedRoles} />}>
+          <div className="space-y-2 mb-4">
+            {config.roles.map((r, i) => (
+              <div key={i} className="flex gap-2">
+                <Inp value={r} onChange={v => setConfig(c => ({ ...c, roles: c.roles.map((x, j) => j === i ? v : x), lastUpdatedRoles: today() }))} />
+                <button onClick={() => setConfig(c => ({ ...c, roles: c.roles.filter((_, j) => j !== i), lastUpdatedRoles: today() }))} className="text-gray-600 hover:text-red-400 px-2">✕</button>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setConfig(c => ({ ...c, roles: [...c.roles, ""], lastUpdatedRoles: today() }))} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">+ {t.addRole}</button>
+        </Card>
+      )}
+
+      {tab === "contracts" && (
+        <Card title={t.contractConfig} action={<TS ts={config.lastUpdatedContracts} />}>
+          <div className="space-y-2 mb-4">
+            {config.contractTypes.map((c, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <div className="flex-1"><Inp value={c} onChange={v => setConfig(cfg => ({ ...cfg, contractTypes: cfg.contractTypes.map((x, j) => j === i ? v : x), lastUpdatedContracts: today() }))} /></div>
+                <button onClick={() => setConfig(cfg => ({ ...cfg, contractTypes: cfg.contractTypes.filter((_, j) => j !== i), lastUpdatedContracts: today() }))} className="text-gray-600 hover:text-red-400 px-2">✕</button>
+              </div>
+            ))}
+            {config.contractTypes.length === 0 && <p className="text-sm text-gray-600 py-2">{t.noData}</p>}
+          </div>
+          <button onClick={() => setConfig(cfg => ({ ...cfg, contractTypes: [...cfg.contractTypes, ""], lastUpdatedContracts: today() }))} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">+ {t.addContract}</button>
+        </Card>
+      )}
+
+      {tab === "locations" && (
+        <Card title={t.locationConfig} action={<TS ts={config.lastUpdatedLocations} />}>
+          <div className="space-y-2 mb-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-gray-800">
+                <th className="text-left py-2 px-3 text-gray-500 text-xs">Code</th>
+                <th className="text-left py-2 px-3 text-gray-500 text-xs">Tên (VI)</th>
+                <th className="text-left py-2 px-3 text-gray-500 text-xs">Name (EN)</th>
+                <th className="text-center py-2 px-3 text-gray-500 text-xs">{t.active}</th>
+                <th className="w-8"></th>
+              </tr></thead>
+              <tbody>
+                {config.locations.map((loc, i) => (
+                  <tr key={loc.code} className="border-b border-gray-800/50">
+                    <td className="py-1.5 px-2 w-20"><Inp value={loc.code} onChange={v => setConfig(cfg => ({ ...cfg, locations: cfg.locations.map((x, j) => j === i ? { ...x, code: v } : x), lastUpdatedLocations: today() }))} /></td>
+                    <td className="py-1.5 px-2"><Inp value={loc.name.vi} onChange={v => setConfig(cfg => ({ ...cfg, locations: cfg.locations.map((x, j) => j === i ? { ...x, name: { ...x.name, vi: v } } : x), lastUpdatedLocations: today() }))} /></td>
+                    <td className="py-1.5 px-2"><Inp value={loc.name.en} onChange={v => setConfig(cfg => ({ ...cfg, locations: cfg.locations.map((x, j) => j === i ? { ...x, name: { ...x.name, en: v } } : x), lastUpdatedLocations: today() }))} /></td>
+                    <td className="py-1.5 px-2 text-center">
+                      <input type="checkbox" checked={loc.active !== false} onChange={e => setConfig(cfg => ({ ...cfg, locations: cfg.locations.map((x, j) => j === i ? { ...x, active: e.target.checked } : x), lastUpdatedLocations: today() }))} className="accent-indigo-500" />
+                    </td>
+                    <td className="py-1.5 px-2"><button onClick={() => setConfig(cfg => ({ ...cfg, locations: cfg.locations.filter((_, j) => j !== i), lastUpdatedLocations: today() }))} className="text-gray-600 hover:text-red-400">✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+            <p className="text-xs text-gray-500 font-semibold">+ {t.addLocation}</p>
+            <div className="grid grid-cols-3 gap-2">
+              <Inp value={newLoc.code} onChange={v => setNewLoc(x => ({ ...x, code: v }))} placeholder="Code (e.g. HN)" />
+              <Inp value={newLoc.nameVi} onChange={v => setNewLoc(x => ({ ...x, nameVi: v }))} placeholder="Tên tiếng Việt" />
+              <Inp value={newLoc.nameEn} onChange={v => setNewLoc(x => ({ ...x, nameEn: v }))} placeholder="English name" />
+            </div>
+            <button onClick={() => {
+              if (!newLoc.code) return;
+              setConfig(cfg => ({ ...cfg, locations: [...cfg.locations, { code: newLoc.code.toUpperCase(), name: { vi: newLoc.nameVi, en: newLoc.nameEn }, active: true }], lastUpdatedLocations: today() }));
+              setNewLoc({ code: "", nameVi: "", nameEn: "" });
+            }} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">{t.addLocation}</button>
+          </div>
+        </Card>
+      )}
+
+      {tab === "othercats" && (
+        <Card title={t.otherCostCatsConfig} action={<TS ts={config.lastUpdatedOtherCats} />}>
+          <div className="space-y-2 mb-4">
+            {config.otherCostCats.map((c, i) => (
+              <div key={i} className="flex gap-2">
+                <Inp value={c} onChange={v => setConfig(cfg => ({ ...cfg, otherCostCats: cfg.otherCostCats.map((x, j) => j === i ? v : x), lastUpdatedOtherCats: today() }))} />
+                <button onClick={() => setConfig(cfg => ({ ...cfg, otherCostCats: cfg.otherCostCats.filter((_, j) => j !== i), lastUpdatedOtherCats: today() }))} className="text-gray-600 hover:text-red-400 px-2">✕</button>
+              </div>
+            ))}
+            {config.otherCostCats.length === 0 && <p className="text-sm text-gray-600 py-2">{t.noData}</p>}
+          </div>
+          <button onClick={() => setConfig(cfg => ({ ...cfg, otherCostCats: [...cfg.otherCostCats, ""], lastUpdatedOtherCats: today() }))} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">+ {t.addCat}</button>
+        </Card>
+      )}
+
       {tab === "costref" && <Card title={t.costRefConfig}><CostRefTable config={config} setConfig={setConfig} t={t} /></Card>}
-      {tab === "income" && <Card title={t.projectIncomeConfig}><div className="max-w-sm"><label className="text-xs text-gray-500 mb-1 block">{t.projectIncomePct}</label><div className="flex items-center gap-3"><Inp type="number" value={config.projectIncomePct} onChange={v => setConfig(c => ({ ...c, projectIncomePct: parseFloat(v) || 0 }))} className="w-32" /><span className="text-gray-400">%</span></div></div></Card>}
+
+      {tab === "income" && (
+        <Card title={t.projectIncomeConfig}>
+          <div className="max-w-sm">
+            <label className="text-xs text-gray-500 mb-1 block">{t.projectIncomePct}</label>
+            <div className="flex items-center gap-3"><Inp type="number" value={config.projectIncomePct} onChange={v => setConfig(c => ({ ...c, projectIncomePct: parseFloat(v) || 0 }))} className="w-32" /><span className="text-gray-400">%</span></div>
+            <p className="text-xs text-gray-600 mt-2">{t.projectIncomeNote}</p>
+          </div>
+        </Card>
+      )}
     </div>
   );
 };
