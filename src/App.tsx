@@ -789,7 +789,7 @@ const VNCostSection = ({ label, color, sk, phaseKey, data, pl, updSec, locations
       <div className="p-5 space-y-4">
         <CEMatrix label={`${t.calEffortEMP} (MM)`} ceData={data?.ceEMP} onChange={(l, p, v) => upd("EMP", l, p, v)} locations={locs} t={t} />
         <CEMatrix label={`${t.calEffortAPP} (MM)`} ceData={data?.ceAPP} onChange={(l, p, v) => upd("APP", l, p, v)} locations={locs} t={t} />
-        <div className="grid grid-cols-3 gap-3 bg-gray-800/30 rounded-xl p-4">
+        <div className="grid grid-cols-3 gap-3 bg-gray-800 rounded-xl p-4">
           <AutoField label={t.empSalaryCost} value={fmt(pl?.empCost)} note="auto" />
           <AutoField label={t.appSalaryCost} value={fmt(pl?.appCost)} note="auto" />
           <AutoField label={t.insurance} value={fmt(pl?.insCost)} note="auto" />
@@ -886,13 +886,13 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
 
   return (
     <div>
-      {isForecast && <div className="mb-4 px-4 py-3 bg-blue-900/20 border border-blue-800 rounded-xl text-xs text-blue-300">ℹ️ {t.forecastNote}</div>}
-      <div className="flex gap-1 mb-4 overflow-x-auto bg-gray-800/50 rounded-xl p-1">
+      {isForecast && <div className="mb-4 px-4 py-3 bg-blue-950 border border-blue-800 rounded-xl text-xs text-blue-300">ℹ️ {t.forecastNote}</div>}
+      <div className="flex gap-1 mb-4 overflow-x-auto bg-gray-800 rounded-xl p-1">
         {tabs.map(tb => <button key={tb.key} onClick={() => setTab(tb.key)} className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${tab === tb.key ? "bg-gray-700 text-white" : "text-gray-500 hover:text-gray-300"}`}>{tb.label}</button>)}
       </div>
       {tab === "info" && (
         <div className="space-y-4">
-          <div className="bg-gray-800/50 rounded-xl p-4">
+          <div className="bg-gray-800 rounded-xl p-4">
             <p className="text-sm font-bold text-indigo-400 mb-3">🌐 {t.offshoreTeam}</p>
             <div className="grid grid-cols-2 gap-3">
               {isForecast ? (<><AutoField label={`${t.billableMM} (remaining)`} value={fcInfo?.fcOff?.toFixed(2) || "—"} note={t.autoCalc} /><AutoField label={t.wipRevenue} value={fmt(parseFloat(fcInfo?.offRev || "0"))} note={t.autoCalc} /></>) : (<><div><label className="text-xs text-gray-500 mb-1 block">{t.billableMM}</label><Inp type="number" value={phaseData?.offshore?.billableMM} onChange={v => updField(phaseKey, "offshore", { ...phaseData?.offshore, billableMM: v })} /></div><div><label className="text-xs text-gray-500 mb-1 block">{t.wipRevenue}</label><Inp type="number" value={phaseData?.offshore?.wipRevenue} onChange={v => updField(phaseKey, "offshore", { ...phaseData?.offshore, wipRevenue: v })} /></div></>)}
@@ -955,53 +955,44 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
   const [phase, setPhase] = useState<"planning" | "forecast">("planning");
   const d = version.data;
   const isForecastOK = ["monthly", "adhoc"].includes(version.type);
+  
   const updSec = (pk: string, sk: string, field: string, val: unknown) => {
     setProjects(ps => ps.map(p => {
       if (p.id !== project.id) return p;
-      return {
-        ...p,
-        versions: p.versions.map(v => {
-          if (v.id !== version.id) return v;
-          const phaseData = v.data[pk as keyof SimData];
-          const section = pk === "planning" || pk === "forecast" 
-            ? (phaseData as PhaseData)[sk as keyof PhaseData]
-            : {};
-          return {
-            ...v,
-            data: {
-              ...v.data,
-              [pk]: {
-                ...phaseData,
-                [sk]: {
-                  ...(typeof section === 'object' && section !== null ? section : {}),
-                  [field]: val
-                }
-              }
+      const newVersions = p.versions.map(v => {
+        if (v.id !== version.id) return v;
+        const phaseData = v.data[pk as keyof SimData];
+        const sectionData = (phaseData as Record<string, unknown>)[sk];
+        const section = typeof sectionData === 'object' && sectionData !== null ? sectionData : {};
+        return {
+          ...v,
+          data: {
+            ...v.data,
+            [pk]: {
+              ...phaseData,
+              [sk]: { ...section, [field]: val }
             }
-          };
-        })
-      };
+          }
+        };
+      });
+      return { ...p, versions: newVersions };
     }));
   };
+  
   const updField = (pk: string, field: string, val: unknown) => {
     setProjects(ps => ps.map(p => {
       if (p.id !== project.id) return p;
-      return {
-        ...p,
-        versions: p.versions.map(v => {
-          if (v.id !== version.id) return v;
-          return {
-            ...v,
-            data: {
-              ...v.data,
-              [pk]: {
-                ...v.data[pk as keyof SimData],
-                [field]: val
-              }
-            }
-          };
-        })
-      };
+      const newVersions = p.versions.map(v => {
+        if (v.id !== version.id) return v;
+        return {
+          ...v,
+          data: {
+            ...v.data,
+            [pk]: { ...v.data[pk as keyof SimData], [field]: val }
+          }
+        };
+      });
+      return { ...p, versions: newVersions };
     }));
   };
   const planPL = useMemo(() => calcPhase(d?.planning, admin), [d?.planning, admin]);
@@ -1264,7 +1255,7 @@ const AdminScreen = ({ config, setConfig, t }: AdminScreenProps) => {
     <div className="p-6 max-w-5xl mx-auto">
       <h2 className="text-xl font-bold text-white mb-6">{t.adminTitle}</h2>
       <div className="flex gap-1 mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800">{tabs.map(tb => <button key={tb.key} onClick={() => setTab(tb.key)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === tb.key ? "bg-gray-700 text-white" : "text-gray-500"}`}>{tb.icon} {tb.label}</button>)}</div>
-      {tab === "target" && <Card title={t.targetSettings}><div className="grid grid-cols-2 gap-6"><div className="bg-gray-800/50 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetGM}</label><Inp type="number" value={config.targetGrossMargin} onChange={v => setConfig(c => ({ ...c, targetGrossMargin: parseFloat(v) || 0 }))} /></div><div className="bg-gray-800/50 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetDM}</label><Inp type="number" value={config.targetDirectMargin} onChange={v => setConfig(c => ({ ...c, targetDirectMargin: parseFloat(v) || 0 }))} /></div></div></Card>}
+      {tab === "target" && <Card title={t.targetSettings}><div className="grid grid-cols-2 gap-6"><div className="bg-gray-800 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetGM}</label><Inp type="number" value={config.targetGrossMargin} onChange={v => setConfig(c => ({ ...c, targetGrossMargin: parseFloat(v) || 0 }))} /></div><div className="bg-gray-800 rounded-xl p-4"><label className="text-xs text-gray-500 mb-1 block">{t.targetDM}</label><Inp type="number" value={config.targetDirectMargin} onChange={v => setConfig(c => ({ ...c, targetDirectMargin: parseFloat(v) || 0 }))} /></div></div></Card>}
       {tab === "roles" && <Card title={t.rolesConfig}><div className="space-y-2 mb-4">{config.roles.map((r, i) => <div key={i} className="flex gap-2"><Inp value={r} onChange={v => setConfig(c => ({ ...c, roles: c.roles.map((x, j) => j === i ? v : x) }))} /><button onClick={() => setConfig(c => ({ ...c, roles: c.roles.filter((_, j) => j !== i) }))} className="text-gray-600 hover:text-red-400 px-2">✕</button></div>)}</div><button onClick={() => setConfig(c => ({ ...c, roles: [...c.roles, ""] }))} className="text-sm px-3 py-1.5 bg-indigo-700 rounded-lg">+ {t.addRole}</button></Card>}
       {tab === "costref" && <Card title={t.costRefConfig}><CostRefTable config={config} setConfig={setConfig} t={t} /></Card>}
       {tab === "income" && <Card title={t.projectIncomeConfig}><div className="max-w-sm"><label className="text-xs text-gray-500 mb-1 block">{t.projectIncomePct}</label><div className="flex items-center gap-3"><Inp type="number" value={config.projectIncomePct} onChange={v => setConfig(c => ({ ...c, projectIncomePct: parseFloat(v) || 0 }))} className="w-32" /><span className="text-gray-400">%</span></div></div></Card>}
