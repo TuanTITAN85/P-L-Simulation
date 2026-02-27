@@ -122,10 +122,15 @@ interface PhasePLResult {
   offRev: number;
   onsRev: number;
   totalRev: number;
-  totalCost: number;
-  grossProfit: number;
-  grossMargin: number;
-  directMargin: number;
+  totalMM: number;          // tổng Calendar Effort (MM)
+  totalCost: number;        // = directCost (backward compat)
+  directCost: number;       // Direct delivery expense
+  overheadCost: number;     // directCost / 0.9 * 10% = directCost / 9
+  deliveryExpense: number;  // directCost + overheadCost
+  directProfit: number;     // totalRev - directCost
+  directMargin: number;     // directProfit / totalRev (%)
+  grossProfit: number;      // totalRev - deliveryExpense
+  grossMargin: number;      // grossProfit / totalRev (%)
 }
 
 const PACKAGES = ["P1","P2","P3","P4","P5","P6","P7","P8","P9"];
@@ -614,6 +619,9 @@ const calcSection = (sec: VNSection | undefined, salTable: Record<string, Record
 
 const calcOtherCosts = (items: OtherCostItem[]): number => items.reduce((s, it) => s + (parseFloat(it.unitPrice) || 0) * (parseFloat(it.qty) || 0) * (parseFloat(it.months) || 0), 0);
 
+const sumCE = (ce: Record<string, Record<string, string>> | undefined, locs: Location[]): number =>
+  (locs || DEFAULT_LOCS).reduce((s, l) => s + PACKAGES.reduce((ss, p) => ss + (parseFloat(ce?.[l.code]?.[p] || "") || 0), 0), 0);
+
 const calcPhase = (phase: PhaseData | undefined, admin: AdminConfig): PhasePLResult => {
   const locs = admin.locations || DEFAULT_LOCS;
   const ip = admin.projectIncomePct || 30;
@@ -630,10 +638,25 @@ const calcPhase = (phase: PhaseData | undefined, admin: AdminConfig): PhasePLRes
   const offRev = parseFloat(phase?.offshore?.wipRevenue || "") || 0;
   const onsRev = parseFloat(phase?.onsite?.wipRevenue || "") || 0;
   const totalRev = offRev + onsRev;
-  const totalCost = primePL.total + supplierPL.total + onsiteTotal + otherCostsTotal;
-  const grossProfit = totalRev - totalCost;
+  // Calendar Effort (total MM)
+  const primeMM = sumCE(phase?.prime?.ceEMP, locs) + sumCE(phase?.prime?.ceAPP, locs);
+  const supplierMM = sumCE(phase?.supplier?.ceEMP, locs) + sumCE(phase?.supplier?.ceAPP, locs);
+  const onsiteMM = (parseFloat(phase?.onsiteCeEMP || "") || 0) + (parseFloat(phase?.onsiteCeAPP || "") || 0);
+  const totalMM = primeMM + supplierMM + onsiteMM;
+  // Cost hierarchy
+  const directCost = primePL.total + supplierPL.total + onsiteTotal + otherCostsTotal;
+  const overheadCost = directCost / 9; // = directCost / 0.9 * 10%
+  const deliveryExpense = directCost + overheadCost;
+  const directProfit = totalRev - directCost;
+  const directMargin = totalRev > 0 ? (directProfit / totalRev) * 100 : 0;
+  const grossProfit = totalRev - deliveryExpense;
   const grossMargin = totalRev > 0 ? (grossProfit / totalRev) * 100 : 0;
-  return { primePL, supplierPL, onsiteTotal, oEMP, oAPP, oOther, otherCostsTotal, offRev, onsRev, totalRev, totalCost, grossProfit, grossMargin, directMargin: grossMargin };
+  return {
+    primePL, supplierPL, onsiteTotal, oEMP, oAPP, oOther, otherCostsTotal,
+    offRev, onsRev, totalRev, totalMM,
+    totalCost: directCost, directCost, overheadCost, deliveryExpense,
+    directProfit, directMargin, grossProfit, grossMargin,
+  };
 };
 
 // Compare Component
@@ -964,12 +987,20 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
     const actRev = fcInfo.actOffMM * fcInfo.upOff + fcInfo.actOnsMM * fcInfo.upOns;
     const planMM = (parseFloat(planData?.offshore?.billableMM || "") || 0) + (parseFloat(planData?.onsite?.billableMM || "") || 0);
     const actMM = fcInfo.actOffMM + fcInfo.actOnsMM;
-    const actCost = planMM > 0 ? planPL.totalCost * (actMM / planMM) : 0;
+    const actDirectCost = planMM > 0 ? planPL.directCost * (actMM / planMM) : 0;
     const combinedRev = actRev + pl.totalRev;
-    const combinedCost = actCost + pl.totalCost;
-    const combinedGP = combinedRev - combinedCost;
+    const combinedDirectCost = actDirectCost + pl.directCost;
+    const combinedOverhead = combinedDirectCost / 9;
+    const combinedDeliveryExpense = combinedDirectCost + combinedOverhead;
+    const combinedDirectProfit = combinedRev - combinedDirectCost;
+    const combinedDirectMargin = combinedRev > 0 ? (combinedDirectProfit / combinedRev) * 100 : 0;
+    const combinedGP = combinedRev - combinedDeliveryExpense;
     const combinedGM = combinedRev > 0 ? (combinedGP / combinedRev) * 100 : 0;
-    return { actRev, actCost, fcRev: pl.totalRev, fcCost: pl.totalCost, combinedRev, combinedCost, combinedGP, combinedGM };
+    return {
+      actRev, actDirectCost, fcRev: pl.totalRev, fcDirectCost: pl.directCost,
+      combinedRev, combinedDirectCost, combinedOverhead, combinedDeliveryExpense,
+      combinedDirectProfit, combinedDirectMargin, combinedGP, combinedGM,
+    };
   }, [isForecast, fcInfo, planPL, planData, pl]);
 
   const tabs = [{ key: "info", label: t.projectInfo }, { key: "prime", label: "🏢 Prime" }, { key: "supplier", label: "🤝 Supplier" }, { key: "onsite", label: "🏙️ Onsite" }, { key: "other", label: `💡 ${t.otherCosts}` }, { key: "pl", label: `📊 P&L` }];
@@ -1002,33 +1033,99 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
       {tab === "other" && <OtherCostsTab items={phaseData?.otherCosts || []} onChange={items => updField(phaseKey, "otherCosts", items)} cats={cats} t={t} />}
       {tab === "pl" && (
         <div className="space-y-4">
-          {/* Forecast Remaining Section (always shown) */}
-          <div className="flex items-center gap-2 mb-1">
+          {/* Header */}
+          <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              {isForecast ? "📋 Forecast Remaining" : "📋 P&L Summary"}
+              {isForecast ? "📋 Forecast Remaining — P&L Summary" : "📋 P&L Summary"}
             </span>
             <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded">{currency}</span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            {([[t.offshoreTeam, pl?.offRev, "blue"], [t.onsiteTeam, pl?.onsRev, "purple"], [t.totalRevenue, pl?.totalRev, "white"]] as const).map(([lb, v, c]) => (
-              <div key={lb} className="bg-gray-800 rounded-xl p-4 text-center"><p className="text-xs text-gray-500 mb-1">{lb}</p><p className={`text-base font-bold text-${c}-400`}>${fmt(v)}</p></div>
-            ))}
+
+          {/* Revenue */}
+          <div className="bg-gray-800/60 rounded-xl p-4">
+            <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-3">💰 Revenue</p>
+            <div className="grid grid-cols-3 gap-3 mb-2">
+              {([["Offshore", pl?.offRev, "blue"], ["Onsite", pl?.onsRev, "purple"], [t.totalRevenue, pl?.totalRev, "white"]] as const).map(([lb, v, c]) => (
+                <div key={lb} className="bg-gray-800 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-500 mb-1">{lb}</p>
+                  <p className={`text-base font-bold text-${c}-400`}>${fmt(v)}</p>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="bg-gray-800 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Cost Breakdown ({currency})</p>
-            <div className="space-y-1 divide-y divide-gray-700">
+
+          {/* Calendar Effort */}
+          <div className="bg-gray-800/60 rounded-xl p-4">
+            <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-3">📅 Calendar Effort</p>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Total Calendar Effort</span>
+              <span className="text-lg font-bold text-indigo-300">{pl?.totalMM?.toFixed(2) || "0.00"} MM</span>
+            </div>
+          </div>
+
+          {/* Cost Breakdown → Direct Delivery Expense */}
+          <div className="bg-gray-800/60 rounded-xl p-4">
+            <p className="text-xs font-semibold text-orange-400 uppercase tracking-wider mb-3">📦 Direct Delivery Expense</p>
+            <div className="space-y-1 divide-y divide-gray-700/60 mb-3">
               <SummaryRow label={t.primeTotalCost} value={pl?.primePL?.total} />
               <SummaryRow label={t.supplierTotalCost} value={pl?.supplierPL?.total} />
               <SummaryRow label={t.onsiteTotalCost} value={pl?.onsiteTotal} />
               <SummaryRow label={t.otherTotalCost} value={pl?.otherCostsTotal} />
-              <SummaryRow label={t.totalCost} value={pl?.totalCost} bold />
+              <SummaryRow label="Direct Delivery Expense" value={pl?.directCost} bold />
+            </div>
+            {/* Direct P&L */}
+            <div className="mt-3 space-y-2 border-t border-gray-700 pt-3">
+              {[
+                { lb: t.totalRevenue,        val: pl?.totalRev,    cls: "text-blue-400" },
+                { lb: "Direct Delivery Expense", val: pl?.directCost, cls: "text-orange-400" },
+                { lb: "Direct Profit",        val: pl?.directProfit, cls: (pl?.directProfit || 0) >= 0 ? "text-green-400" : "text-red-400" },
+              ].map(r => (
+                <div key={r.lb} className="flex justify-between pb-1.5 border-b border-gray-700/50">
+                  <span className="text-sm text-gray-400">{r.lb}</span>
+                  <span className={`font-bold ${r.cls}`}>${fmt(r.val)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between items-center pt-1">
+                <span className="text-sm font-semibold text-gray-300">Direct Margin</span>
+                <span className={`text-xl font-black ${mColor(pl?.directMargin || 0, tgt_d)}`}>{pct(pl?.directMargin)}%</span>
+              </div>
             </div>
           </div>
-          <div className="bg-gray-800 rounded-xl p-4 space-y-2">
-            {([[t.totalRevenue, pl?.totalRev, "text-blue-400"], [t.totalCost, pl?.totalCost, "text-orange-400"], [t.grossProfit, pl?.grossProfit, (pl?.grossProfit || 0) >= 0 ? "text-green-400" : "text-red-400"]] as const).map(([lb, v, cls]) => (
-              <div key={lb} className="flex justify-between border-b border-gray-700 pb-2"><span className="text-sm text-gray-400">{lb}</span><span className={`font-bold ${cls}`}>${fmt(v)}</span></div>
-            ))}
+
+          {/* Overhead & Total Delivery Expense */}
+          <div className="bg-gray-800/60 rounded-xl p-4">
+            <p className="text-xs font-semibold text-yellow-500 uppercase tracking-wider mb-3">🏗️ Overhead & Delivery Expense</p>
+            <div className="space-y-2">
+              {[
+                { lb: "Direct Delivery Expense", val: pl?.directCost,      cls: "text-orange-400" },
+                { lb: "Overhead Cost (÷0.9×10%)", val: pl?.overheadCost,   cls: "text-yellow-400" },
+                { lb: "Delivery Expense (Total)",  val: pl?.deliveryExpense, cls: "text-white" },
+              ].map(r => (
+                <div key={r.lb} className="flex justify-between pb-1.5 border-b border-gray-700/50">
+                  <span className="text-sm text-gray-400">{r.lb}</span>
+                  <span className={`font-bold ${r.cls}`}>${fmt(r.val)}</span>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {/* Gross P&L */}
+          <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
+            <p className="text-xs font-semibold text-green-400 uppercase tracking-wider mb-3">📊 Gross P&L</p>
+            <div className="space-y-2">
+              {[
+                { lb: t.totalRevenue,    val: pl?.totalRev,      cls: "text-blue-400" },
+                { lb: "Delivery Expense", val: pl?.deliveryExpense, cls: "text-orange-400" },
+                { lb: t.grossProfit,     val: pl?.grossProfit,   cls: (pl?.grossProfit || 0) >= 0 ? "text-green-400" : "text-red-400" },
+              ].map(r => (
+                <div key={r.lb} className="flex justify-between pb-2 border-b border-gray-700/60">
+                  <span className="text-sm text-gray-400">{r.lb}</span>
+                  <span className={`font-bold ${r.cls}`}>${fmt(r.val)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <MarginCard label={t.grossMargin} value={pl?.grossMargin || 0} target={tgt_g} t={t} />
             <MarginCard label={t.directMargin} value={pl?.directMargin || 0} target={tgt_d} t={t} />
@@ -1061,17 +1158,17 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
                   </div>
                 </div>
               </div>
-              {/* Cost breakdown */}
+              {/* Direct Cost breakdown */}
               <div className="bg-gray-900 rounded-xl border border-orange-800/50 overflow-hidden">
                 <div className="px-4 py-2 bg-orange-950/40 border-b border-orange-800/40">
-                  <p className="text-xs font-semibold text-orange-400">Chi phí ({currency})</p>
+                  <p className="text-xs font-semibold text-orange-400">Direct Delivery Expense ({currency})</p>
                 </div>
-                <div className="p-3">
+                <div className="p-3 space-y-2">
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: "Actual Cost (est.)", val: combinedMetrics.actCost, cls: "text-orange-400" },
-                      { label: "Forecast Cost", val: combinedMetrics.fcCost, cls: "text-yellow-400" },
-                      { label: "Tổng Cost", val: combinedMetrics.combinedCost, cls: "text-white" },
+                      { label: "Actual (est.)", val: combinedMetrics.actDirectCost, cls: "text-orange-400" },
+                      { label: "Forecast", val: combinedMetrics.fcDirectCost, cls: "text-yellow-400" },
+                      { label: "Tổng Direct Cost", val: combinedMetrics.combinedDirectCost, cls: "text-white" },
                     ].map(item => (
                       <div key={item.label} className="bg-gray-800 rounded-lg p-3 text-center">
                         <p className="text-xs text-gray-500 mb-1">{item.label}</p>
@@ -1079,30 +1176,46 @@ const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData,
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-600 mt-2 px-1">* Actual Cost được ước tính theo tỷ lệ Actual MM / Planning MM × Planning Total Cost</p>
+                  <div className="flex justify-between border-t border-gray-700 pt-2">
+                    <span className="text-xs text-gray-500">Overhead (÷0.9×10%)</span>
+                    <span className="text-sm font-semibold text-yellow-400">${fmt(combinedMetrics.combinedOverhead)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-xs text-gray-400 font-semibold">Delivery Expense (Total)</span>
+                    <span className="text-sm font-bold text-white">${fmt(combinedMetrics.combinedDeliveryExpense)}</span>
+                  </div>
+                  <p className="text-xs text-gray-600 pt-1">* Actual cost ước tính theo tỷ lệ Actual MM / Planning MM × Planning Direct Cost</p>
                 </div>
               </div>
               {/* Combined P&L */}
               <div className="bg-gray-900 rounded-xl border border-teal-700/60 p-4 space-y-2">
                 <p className="text-xs font-semibold text-teal-300 mb-3">Kết quả tổng hợp (Actual + Forecast)</p>
                 {[
-                  { lb: "Tổng Revenue", val: combinedMetrics.combinedRev, cls: "text-blue-400" },
-                  { lb: "Tổng Cost", val: combinedMetrics.combinedCost, cls: "text-orange-400" },
-                  { lb: "Gross Profit", val: combinedMetrics.combinedGP, cls: combinedMetrics.combinedGP >= 0 ? "text-green-400" : "text-red-400" },
+                  { lb: "Tổng Revenue",           val: combinedMetrics.combinedRev,             cls: "text-blue-400" },
+                  { lb: "Direct Delivery Expense", val: combinedMetrics.combinedDirectCost,      cls: "text-orange-400" },
+                  { lb: "Direct Profit",           val: combinedMetrics.combinedDirectProfit,    cls: combinedMetrics.combinedDirectProfit >= 0 ? "text-green-300" : "text-red-400" },
+                  { lb: "Delivery Expense (incl. overhead)", val: combinedMetrics.combinedDeliveryExpense, cls: "text-yellow-400" },
+                  { lb: "Gross Profit",            val: combinedMetrics.combinedGP,              cls: combinedMetrics.combinedGP >= 0 ? "text-green-400" : "text-red-400" },
                 ].map(row => (
                   <div key={row.lb} className="flex justify-between border-b border-gray-800 pb-2">
                     <span className="text-sm text-gray-400">{row.lb}</span>
                     <span className={`font-bold ${row.cls}`}>${fmt(row.val)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between pt-1">
-                  <span className="text-sm font-bold text-teal-300">Gross Margin (Combined)</span>
-                  <span className={`text-lg font-black ${mColor(combinedMetrics.combinedGM, tgt_g)}`}>{pct(combinedMetrics.combinedGM)}%</span>
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500">Direct Margin</p>
+                    <p className={`text-lg font-black ${mColor(combinedMetrics.combinedDirectMargin, tgt_d)}`}>{pct(combinedMetrics.combinedDirectMargin)}%</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500">Gross Margin</p>
+                    <p className={`text-lg font-black ${mColor(combinedMetrics.combinedGM, tgt_g)}`}>{pct(combinedMetrics.combinedGM)}%</p>
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <MarginCard label="Combined Gross Margin" value={combinedMetrics.combinedGM} target={tgt_g} t={t} />
-                <MarginCard label="Forecast-only Margin" value={pl?.grossMargin || 0} target={tgt_g} t={t} />
+                <MarginCard label="Combined Direct Margin" value={combinedMetrics.combinedDirectMargin} target={tgt_d} t={t} />
               </div>
             </div>
           )}
@@ -1188,12 +1301,16 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
     const actRev = actOffMM * upOff + actOnsMM * upOns;
     const planMM = planOff + planOns;
     const actMM = actOffMM + actOnsMM;
-    const actCost = planMM > 0 ? planPL.totalCost * (actMM / planMM) : 0;
+    const actDirectCost = planMM > 0 ? planPL.directCost * (actMM / planMM) : 0;
     const combinedRev = actRev + fcPL.totalRev;
-    const combinedCost = actCost + fcPL.totalCost;
-    const combinedGP = combinedRev - combinedCost;
+    const combinedDirectCost = actDirectCost + fcPL.directCost;
+    const combinedOverhead = combinedDirectCost / 9;
+    const combinedDeliveryExpense = combinedDirectCost + combinedOverhead;
+    const combinedDirectProfit = combinedRev - combinedDirectCost;
+    const combinedDirectMargin = combinedRev > 0 ? (combinedDirectProfit / combinedRev) * 100 : 0;
+    const combinedGP = combinedRev - combinedDeliveryExpense;
     const combinedGM = combinedRev > 0 ? (combinedGP / combinedRev) * 100 : 0;
-    return { combinedGM, combinedDM: combinedGM };
+    return { combinedGM, combinedDM: combinedDirectMargin };
   }, [phase, d?.planning, project.actualData, planPL, fcPL]);
 
   const displayGM = phase === "forecast" && combinedFcMetrics ? combinedFcMetrics.combinedGM : activePL.grossMargin;
