@@ -962,7 +962,8 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
       const newVersions = p.versions.map(v => {
         if (v.id !== version.id) return v;
         const phaseData = v.data[pk as keyof SimData];
-        const sectionData = (phaseData as Record<string, unknown>)[sk];
+        const phaseDataAny = phaseData as unknown as Record<string, unknown>;
+        const sectionData = phaseDataAny[sk];
         const section = typeof sectionData === 'object' && sectionData !== null ? sectionData : {};
         return {
           ...v,
@@ -970,7 +971,7 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
             ...v.data,
             [pk]: {
               ...phaseData,
-              [sk]: { ...section, [field]: val }
+              [sk]: { ...(section as Record<string, unknown>), [field]: val }
             }
           }
         };
