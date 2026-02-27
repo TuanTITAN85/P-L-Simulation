@@ -955,8 +955,55 @@ const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScree
   const [phase, setPhase] = useState<"planning" | "forecast">("planning");
   const d = version.data;
   const isForecastOK = ["monthly", "adhoc"].includes(version.type);
-  const updSec = (pk: string, sk: string, field: string, val: unknown) => setProjects(ps => ps.map(p => p.id === project.id ? { ...p, versions: p.versions.map(v => v.id === version.id ? { ...v, data: { ...v.data, [pk]: { ...v.data[pk as keyof SimData], [sk]: { ...(v.data[pk as keyof SimData] as Record<string, unknown>)?.[sk] as Record<string, unknown>, [field]: val } } } } : v) } : p));
-  const updField = (pk: string, field: string, val: unknown) => setProjects(ps => ps.map(p => p.id === project.id ? { ...p, versions: p.versions.map(v => v.id === version.id ? { ...v, data: { ...v.data, [pk]: { ...v.data[pk as keyof SimData], [field]: val } } } : v) } : p));
+  const updSec = (pk: string, sk: string, field: string, val: unknown) => {
+    setProjects(ps => ps.map(p => {
+      if (p.id !== project.id) return p;
+      return {
+        ...p,
+        versions: p.versions.map(v => {
+          if (v.id !== version.id) return v;
+          const phaseData = v.data[pk as keyof SimData];
+          const section = pk === "planning" || pk === "forecast" 
+            ? (phaseData as PhaseData)[sk as keyof PhaseData]
+            : {};
+          return {
+            ...v,
+            data: {
+              ...v.data,
+              [pk]: {
+                ...phaseData,
+                [sk]: {
+                  ...(typeof section === 'object' && section !== null ? section : {}),
+                  [field]: val
+                }
+              }
+            }
+          };
+        })
+      };
+    }));
+  };
+  const updField = (pk: string, field: string, val: unknown) => {
+    setProjects(ps => ps.map(p => {
+      if (p.id !== project.id) return p;
+      return {
+        ...p,
+        versions: p.versions.map(v => {
+          if (v.id !== version.id) return v;
+          return {
+            ...v,
+            data: {
+              ...v.data,
+              [pk]: {
+                ...v.data[pk as keyof SimData],
+                [field]: val
+              }
+            }
+          };
+        })
+      };
+    }));
+  };
   const planPL = useMemo(() => calcPhase(d?.planning, admin), [d?.planning, admin]);
   const fcPL = useMemo(() => calcPhase(d?.forecast, admin), [d?.forecast, admin]);
   const activePL = phase === "planning" ? planPL : fcPL;
