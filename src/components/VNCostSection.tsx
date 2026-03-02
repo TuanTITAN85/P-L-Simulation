@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import type { VNSection, PLResult, Location } from "../types";
 import type { TranslationType } from "../i18n/translations";
 import { DEFAULT_LOCS } from "../constants/defaults";
 import { fmt, analyzePyramid } from "../utils/helpers";
 import { Inp, AutoField, SummaryRow } from "./ui";
 import { CEMatrix } from "./CEMatrix";
+import { api } from "../api";
 
 interface VNCostSectionProps {
   label: string;
@@ -24,11 +25,29 @@ export const VNCostSection = ({ label, color, sk, phaseKey, data, pl, updSec, lo
     const f = type === "EMP" ? "ceEMP" : "ceAPP";
     updSec(phaseKey, sk, f, { ...data?.[f], [loc]: { ...data?.[f]?.[loc], [pkg]: val } });
   };
+
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const analyzeAI = async () => {
+    setAiLoading(true);
+    try {
+      const res = await api.analyzePyramid({ ceEMP: data?.ceEMP, ceAPP: data?.ceAPP, sk, locations: locs });
+      setAiResult(res.analysis);
+    } catch (err) {
+      setAiResult(err instanceof Error ? err.message : "Không thể kết nối AI. Kiểm tra ANTHROPIC_API_KEY.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const bdr = color === "indigo" ? "border-indigo-800" : "border-purple-800";
-  const bg = color === "indigo" ? "bg-indigo-950/30" : "bg-purple-950/30";
-  const tc = color === "indigo" ? "text-indigo-300" : "text-purple-300";
-  const empPyramid = useMemo(() => analyzePyramid(data?.ceEMP, locs), [data?.ceEMP, locs]);
-  const appPyramid = useMemo(() => analyzePyramid(data?.ceAPP, locs), [data?.ceAPP, locs]);
+  const bg  = color === "indigo" ? "bg-indigo-950/30"  : "bg-purple-950/30";
+  const tc  = color === "indigo" ? "text-indigo-300"   : "text-purple-300";
+
+  // Combined EMP+APP pyramid analysis
+  const pyramid = useMemo(() => analyzePyramid(data?.ceEMP, data?.ceAPP, locs), [data?.ceEMP, data?.ceAPP, locs]);
+
   return (
     <div className={`rounded-xl border ${bdr} overflow-hidden`}>
       <div className={`px-5 py-3 ${bg} flex items-center justify-between`}>
@@ -37,17 +56,35 @@ export const VNCostSection = ({ label, color, sk, phaseKey, data, pl, updSec, lo
       </div>
       <div className="p-5 space-y-4">
         <CEMatrix label={`${t.calEffortEMP} (MM)`} ceData={data?.ceEMP} onChange={(l, p, v) => upd("EMP", l, p, v)} locations={locs} t={t} />
-        {empPyramid.status !== "info" && (
-          <div className={`rounded-lg px-3 py-2 text-xs flex gap-2 items-start ${empPyramid.status === "warning" ? "bg-yellow-950/60 border border-yellow-700/60 text-yellow-300" : "bg-green-950/60 border border-green-700/60 text-green-300"}`}>
-            <span className="shrink-0">🤖 AI:</span><span>{empPyramid.message}</span>
-          </div>
-        )}
         <CEMatrix label={`${t.calEffortAPP} (MM)`} ceData={data?.ceAPP} onChange={(l, p, v) => upd("APP", l, p, v)} locations={locs} t={t} />
-        {appPyramid.status !== "info" && (
-          <div className={`rounded-lg px-3 py-2 text-xs flex gap-2 items-start ${appPyramid.status === "warning" ? "bg-yellow-950/60 border border-yellow-700/60 text-yellow-300" : "bg-green-950/60 border border-green-700/60 text-green-300"}`}>
-            <span className="shrink-0">🤖 AI:</span><span>{appPyramid.message}</span>
+
+        {/* Combined pyramid analysis (EMP + APP) */}
+        {pyramid.status !== "info" && (
+          <div className={`rounded-lg px-3 py-2 text-xs flex gap-2 items-start ${pyramid.status === "warning" ? "bg-yellow-950/60 border border-yellow-700/60 text-yellow-300" : "bg-green-950/60 border border-green-700/60 text-green-300"}`}>
+            <span className="shrink-0">📊</span><span>{pyramid.message}</span>
           </div>
         )}
+
+        {/* AI analysis button + result */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => void analyzeAI()}
+            disabled={aiLoading}
+            className="text-xs px-3 py-1.5 bg-violet-900/50 hover:bg-violet-800/60 border border-violet-700/50 text-violet-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {aiLoading ? "⏳ Đang phân tích..." : "🤖 Phân tích AI"}
+          </button>
+          {aiResult && (
+            <button onClick={() => setAiResult(null)} className="text-xs text-gray-600 hover:text-gray-400">✕ xoá</button>
+          )}
+        </div>
+        {aiResult && (
+          <div className="rounded-lg px-4 py-3 text-xs bg-violet-950/50 border border-violet-700/50 text-violet-200 leading-relaxed">
+            <span className="text-violet-400 font-semibold mr-1">🤖 AI:</span>{aiResult}
+          </div>
+        )}
+
+        {/* Cost summary fields */}
         <div className="grid grid-cols-3 gap-3 bg-gray-800 rounded-xl p-4">
           <AutoField label={t.empSalaryCost} value={fmt(pl?.empCost)} note="auto" />
           <AutoField label={t.appSalaryCost} value={fmt(pl?.appCost)} note="auto" />

@@ -8,7 +8,7 @@ import { Toast } from "./Toast";
 
 interface CostRefTableProps {
   config: AdminConfig;
-  setConfig: React.Dispatch<React.SetStateAction<AdminConfig>>;
+  setConfig: (fn: (prev: AdminConfig) => AdminConfig) => void;
   t: TranslationType;
 }
 

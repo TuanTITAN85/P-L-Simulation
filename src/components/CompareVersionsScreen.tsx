@@ -11,11 +11,13 @@ interface CompareVersionsScreenProps {
   admin: AdminConfig;
   onBack: () => void;
   t: TranslationType;
+  initialBaseId?: string;
+  initialCompareId?: string;
 }
 
-export const CompareVersionsScreen = ({ project, admin, onBack, t }: CompareVersionsScreenProps) => {
-  const [baseId, setBaseId] = useState("");
-  const [compareId, setCompareId] = useState("");
+export const CompareVersionsScreen = ({ project, admin, onBack, t, initialBaseId, initialCompareId }: CompareVersionsScreenProps) => {
+  const [baseId, setBaseId] = useState(initialBaseId ?? "");
+  const [compareId, setCompareId] = useState(initialCompareId ?? "");
   const [phaseType, setPhaseType] = useState<"planning" | "forecast">("planning");
 
   const versions = project.versions || [];

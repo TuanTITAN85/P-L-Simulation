@@ -28,12 +28,17 @@ export const mBg = (m: number, tgt: number): string =>
   m >= tgt ? "bg-green-500" : m >= tgt * 0.8 ? "bg-yellow-500" : "bg-red-500";
 
 // P9 = highest level (senior), P1 = lowest (junior). Pyramid: base(P1-P3) > belly(P4-P6) > top(P7-P9)
+// Accepts both EMP and APP matrices and combines them for a complete team-level view.
 export const analyzePyramid = (
-  ceData: Record<string, Record<string, string>> | undefined,
+  ceEMP: Record<string, Record<string, string>> | undefined,
+  ceAPP: Record<string, Record<string, string>> | undefined,
   locs: Location[]
 ): { status: "ok" | "warning" | "info"; message: string } => {
   const totByPkg = PACKAGES.map(p =>
-    (locs || DEFAULT_LOCS).reduce((s, l) => s + (parseFloat(ceData?.[l.code]?.[p] || "") || 0), 0)
+    (locs || DEFAULT_LOCS).reduce((s, l) =>
+      s +
+      (parseFloat(ceEMP?.[l.code]?.[p] || "") || 0) +
+      (parseFloat(ceAPP?.[l.code]?.[p] || "") || 0), 0)
   );
   const grand = totByPkg.reduce((s, v) => s + v, 0);
   if (grand === 0) return { status: "info", message: "Chưa có dữ liệu effort để phân tích cơ cấu nguồn lực." };

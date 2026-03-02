@@ -1,59 +1,77 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Project, Version, AdminConfig, SimData } from "../types";
 import type { TranslationType } from "../i18n/translations";
 import { SIM_TYPES } from "../constants/packages";
 import { pct, mColor } from "../utils/helpers";
 import { calcPhase } from "../utils/calculations";
+import { api } from "../api";
 import { PhasePanel } from "./PhasePanel";
 
 interface SimScreenProps {
   project: Project;
   version: Version;
-  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  onVersionSaved: (versionId: number, data: SimData) => void;
+  onOpenCompare: (baseId: string) => void;
   admin: AdminConfig;
   onBack: () => void;
   t: TranslationType;
 }
 
-export const SimScreen = ({ project, version, setProjects, admin, onBack, t }: SimScreenProps) => {
+export const SimScreen = ({ project, version, onVersionSaved, onOpenCompare, admin, onBack, t }: SimScreenProps) => {
   const [phase, setPhase] = useState<"planning" | "forecast">("planning");
-  const d = version.data;
+  const [localData, setLocalData] = useState<SimData>(version.data);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  const handleBack = () => {
+    if (dirty) { setShowLeaveConfirm(true); } else { onBack(); }
+  };
+
   const isForecastOK = ["monthly", "adhoc"].includes(version.type);
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.saveVersion(version.id, localData);
+      onVersionSaved(version.id, localData);
+      setDirty(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updSec = (pk: string, sk: string, field: string, val: unknown) => {
-    setProjects(ps => ps.map(p => {
-      if (p.id !== project.id) return p;
-      const newVersions = p.versions.map(v => {
-        if (v.id !== version.id) return v;
-        const phaseData = v.data[pk as keyof SimData];
-        const phaseDataAny = phaseData as unknown as Record<string, unknown>;
-        const sectionData = phaseDataAny[sk];
-        const section = typeof sectionData === "object" && sectionData !== null ? sectionData : {};
-        return {
-          ...v,
-          data: {
-            ...v.data,
-            [pk]: { ...phaseData, [sk]: { ...(section as Record<string, unknown>), [field]: val } }
-          }
-        };
-      });
-      return { ...p, versions: newVersions };
-    }));
+    setLocalData(prev => {
+      const phaseData = prev[pk as keyof SimData];
+      const phaseDataAny = phaseData as unknown as Record<string, unknown>;
+      const sectionData = phaseDataAny[sk];
+      const section = typeof sectionData === "object" && sectionData !== null ? sectionData : {};
+      return {
+        ...prev,
+        [pk]: { ...phaseData, [sk]: { ...(section as Record<string, unknown>), [field]: val } },
+      };
+    });
+    setDirty(true);
   };
 
   const updField = (pk: string, field: string, val: unknown) => {
-    setProjects(ps => ps.map(p => {
-      if (p.id !== project.id) return p;
-      const newVersions = p.versions.map(v => {
-        if (v.id !== version.id) return v;
-        return { ...v, data: { ...v.data, [pk]: { ...v.data[pk as keyof SimData], [field]: val } } };
-      });
-      return { ...p, versions: newVersions };
+    setLocalData(prev => ({
+      ...prev,
+      [pk]: { ...prev[pk as keyof SimData], [field]: val },
     }));
+    setDirty(true);
   };
 
-  const planPL = useMemo(() => calcPhase(d?.planning, admin), [d?.planning, admin]);
-  const fcPL   = useMemo(() => calcPhase(d?.forecast, admin),  [d?.forecast, admin]);
+  const planPL = useMemo(() => calcPhase(localData?.planning, admin), [localData?.planning, admin]);
+  const fcPL   = useMemo(() => calcPhase(localData?.forecast, admin),  [localData?.forecast, admin]);
   const activePL = phase === "planning" ? planPL : fcPL;
   const tgt_g = admin.targetGrossMargin || 40;
   const tgt_d = admin.targetDirectMargin || 54;
@@ -61,7 +79,7 @@ export const SimScreen = ({ project, version, setProjects, admin, onBack, t }: S
 
   const combinedFcMetrics = useMemo(() => {
     if (phase !== "forecast") return null;
-    const planData = d?.planning;
+    const planData = localData?.planning;
     const primeEntries = project.actualData?.prime || [];
     const planOff = parseFloat(planData?.offshore?.billableMM || "") || 0;
     const planOns = parseFloat(planData?.onsite?.billableMM || "") || 0;
@@ -86,26 +104,52 @@ export const SimScreen = ({ project, version, setProjects, admin, onBack, t }: S
     const combinedGP = combinedRev - combinedDeliveryExpense;
     const combinedGM = combinedRev > 0 ? (combinedGP / combinedRev) * 100 : 0;
     return { combinedGM, combinedDM: combinedDirectMargin };
-  }, [phase, d?.planning, project.actualData, planPL, fcPL]);
+  }, [phase, localData?.planning, project.actualData, planPL, fcPL]);
 
   const displayGM = phase === "forecast" && combinedFcMetrics ? combinedFcMetrics.combinedGM : activePL.grossMargin;
   const displayDM = phase === "forecast" && combinedFcMetrics ? combinedFcMetrics.combinedDM : activePL.directMargin;
 
   return (
     <div className="flex flex-col h-full">
+      {showLeaveConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowLeaveConfirm(false)}>
+          <div className="bg-gray-900 border border-yellow-700 rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="text-2xl mb-3">⚠️</div>
+            <h3 className="text-white font-bold mb-1">Có thay đổi chưa lưu</h3>
+            <p className="text-sm text-gray-400 mb-5">Bạn có thay đổi chưa được lưu. Rời trang sẽ mất toàn bộ thay đổi.</p>
+            <div className="flex gap-3">
+              <button onClick={onBack} className="flex-1 px-4 py-2 bg-yellow-700 hover:bg-yellow-600 rounded-lg text-sm font-medium transition">Rời trang</button>
+              <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition">Ở lại</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-3 flex-wrap">
-        <button onClick={onBack} className="text-sm text-gray-500 hover:text-white">← {t.back}</button>
+        <button onClick={handleBack} className="text-sm text-gray-500 hover:text-white">← {t.back}</button>
         <div className="flex-1 min-w-0">
           <span className="text-white font-semibold">{project.code} — {project.name}</span>
           <span className="text-gray-500 text-sm ml-2">{stl(version.type)} · {version.date}</span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {([[t.grossMargin, displayGM, tgt_g], [t.directMargin, displayDM, tgt_d]] as const).map(([lb, v, tgt]) => (
             <div key={lb} className="text-center">
               <div className="text-xs text-gray-500">{lb}{phase === "forecast" && combinedFcMetrics ? " (combined)" : ""}</div>
               <div className={`text-lg font-black ${mColor(v, tgt)}`}>{pct(v)}%</div>
             </div>
           ))}
+          <button
+            onClick={() => onOpenCompare(version.id.toString())}
+            className="text-sm px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 transition"
+          >
+            ⚖️ {t.compare}
+          </button>
+          <button
+            onClick={() => void handleSave()}
+            disabled={!dirty || saving}
+            className={`text-sm px-4 py-1.5 rounded-lg font-medium transition ${dirty ? "bg-green-700 hover:bg-green-600 text-white" : "bg-gray-800 text-gray-600 cursor-not-allowed"}`}
+          >
+            {saving ? "Đang lưu..." : dirty ? `💾 ${t.save}` : `✓ ${t.save}`}
+          </button>
         </div>
       </div>
       <div className="bg-gray-950 px-6 pt-4 pb-0 flex gap-2">
@@ -113,19 +157,18 @@ export const SimScreen = ({ project, version, setProjects, admin, onBack, t }: S
           className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold border-t border-l border-r transition ${phase === "planning" ? "bg-gray-900 border-gray-800 text-white" : "bg-gray-800/50 border-transparent text-gray-500 hover:text-gray-300"}`}>
           📋 {t.planningPhase}
         </button>
-        {isForecastOK
-          ? <button onClick={() => setPhase("forecast")}
-              className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold border-t border-l border-r transition ${phase === "forecast" ? "bg-gray-900 border-gray-800 text-white" : "bg-gray-800/50 border-transparent text-gray-500 hover:text-gray-300"}`}>
-              🔭 {t.forecastPhase}
-            </button>
-          : <button disabled className="px-5 py-2.5 rounded-t-xl text-sm font-semibold text-gray-700 cursor-not-allowed">🔭 {t.forecastPhase}</button>
-        }
+        {isForecastOK && (
+          <button onClick={() => setPhase("forecast")}
+            className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold border-t border-l border-r transition ${phase === "forecast" ? "bg-gray-900 border-gray-800 text-white" : "bg-gray-800/50 border-transparent text-gray-500 hover:text-gray-300"}`}>
+            🔭 {t.forecastPhase}
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto bg-gray-900 border-t border-gray-800">
         <div className="p-5 max-w-5xl mx-auto">
           <PhasePanel
-            phaseKey={phase} phaseData={d?.[phase]} pl={activePL}
-            isForecast={phase === "forecast"} planData={d?.planning}
+            phaseKey={phase} phaseData={localData?.[phase]} pl={activePL}
+            isForecast={phase === "forecast"} planData={localData?.planning}
             actualData={project.actualData} updSec={updSec} updField={updField}
             admin={admin} t={t}
           />

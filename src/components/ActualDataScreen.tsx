@@ -2,17 +2,18 @@ import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import type { Project, ActualEntry } from "../types";
 import type { TranslationType } from "../i18n/translations";
-import { uid, today, fmt } from "../utils/helpers";
+import { today, fmt } from "../utils/helpers";
+import { api } from "../api";
 import { Toast } from "./Toast";
 import { Badge } from "./Badge";
 
 interface ActualDataScreenProps {
   project: Project;
-  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  onReload: () => Promise<void>;
   t: TranslationType;
 }
 
-export const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenProps) => {
+export const ActualDataScreen = ({ project, onReload, t }: ActualDataScreenProps) => {
   const [activeTab, setActiveTab] = useState<"prime" | "supplier">("prime");
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -150,19 +151,19 @@ export const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenPr
     return { filtered, rev, cost, bmm, ce, month };
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     const preview = getPreview();
     if (!preview || preview.filtered.length === 0) { showToast("Không có dữ liệu phù hợp", "error"); return; }
-    const entry: ActualEntry = {
-      id: uid(), month: preview.month, importedAt: today(),
+    const entry: Omit<ActualEntry, "id"> = {
+      month: preview.month, importedAt: today(),
       rows: preview.filtered, fileName: staged!.fileName, selectedCodes: selCodes,
       offshoreActualMM: preview.bmm, onsiteActualMM: 0,
       actualRevenue: preview.rev, actualDirectCost: preview.cost, calendarEffort: preview.ce,
     };
-    setProjects(ps => ps.map(p => p.id === project.id
-      ? { ...p, actualData: { ...p.actualData, [activeTab]: [...(p.actualData?.[activeTab] || []), entry] } } : p));
+    await api.addActual(project.id, activeTab, entry);
     setStaged(null); setSelCodes([]);
     showToast(t.importSuccess);
+    await onReload();
   };
 
   const preview = getPreview();
@@ -256,7 +257,7 @@ export const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenPr
 
             {/* Confirm / Cancel */}
             <div className="flex gap-2">
-              <button onClick={handleConfirmImport} disabled={selCodes.length === 0 || !preview || preview.filtered.length === 0}
+              <button onClick={() => void handleConfirmImport()} disabled={selCodes.length === 0 || !preview || preview.filtered.length === 0}
                 className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium">
                 ✅ Xác nhận Import ({selCodes.length} code đã chọn)
               </button>
@@ -288,8 +289,7 @@ export const ActualDataScreen = ({ project, setProjects, t }: ActualDataScreenPr
                     </div>
                   )}
                 </div>
-                <button onClick={() => setProjects(ps => ps.map(p => p.id === project.id
-                  ? { ...p, actualData: { ...p.actualData, [activeTab]: p.actualData[activeTab].filter(e => e.id !== entry.id) } } : p))}
+                <button onClick={() => { void api.deleteActual(entry.id).then(() => onReload()); }}
                   className="text-xs px-3 py-1 bg-red-900 rounded-lg text-red-300 shrink-0">{t.del}</button>
               </div>
               <div className="grid grid-cols-4 gap-2">
