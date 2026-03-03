@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
+import { requirePmoOrDcl } from "../middleware/auth";
 
 const router = Router();
 
@@ -44,6 +45,7 @@ function mapProject(p: any, versions: any[], actuals: any[]) {
     endDate: p.end_date,
     currency: p.currency,
     status: p.status,
+    lineId: p.line_id ? Number(p.line_id) : null,
     versions: versions.map(mapVersion),
     actualData: {
       prime:    actuals.filter(a => a.tab === "prime").map(mapActualEntry),
@@ -54,14 +56,40 @@ function mapProject(p: any, versions: any[], actuals: any[]) {
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-// GET /api/projects
-router.get("/projects", async (_req, res) => {
-  const { rows: projects } = await pool.query(
-    "SELECT * FROM projects ORDER BY created_at"
-  );
-  if (projects.length === 0) { res.json([]); return; }
+// GET /api/projects — filtered by role
+router.get("/projects", async (req, res) => {
+  const user = req.user!;
+  let projectRows;
 
-  const ids = projects.map(p => p.id);
+  if (user.role === "pmo" || user.role === "dcl") {
+    const { rows } = await pool.query("SELECT * FROM projects ORDER BY created_at");
+    projectRows = rows;
+  } else if (user.role === "sm") {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT p.*
+       FROM projects p
+       JOIN user_lines ul ON ul.line_id = p.line_id
+       WHERE ul.user_email = $1
+       ORDER BY p.created_at`,
+      [user.email]
+    );
+    projectRows = rows;
+  } else {
+    // pm — only assigned projects
+    const { rows } = await pool.query(
+      `SELECT p.*
+       FROM projects p
+       JOIN user_projects up ON up.project_id = p.id
+       WHERE up.user_email = $1
+       ORDER BY p.created_at`,
+      [user.email]
+    );
+    projectRows = rows;
+  }
+
+  if (projectRows.length === 0) { res.json([]); return; }
+
+  const ids = projectRows.map(p => p.id);
   const { rows: versions } = await pool.query(
     "SELECT * FROM versions WHERE project_id = ANY($1) ORDER BY created_at", [ids]
   );
@@ -69,7 +97,7 @@ router.get("/projects", async (_req, res) => {
     "SELECT * FROM actual_entries WHERE project_id = ANY($1) ORDER BY id", [ids]
   );
 
-  res.json(projects.map(p =>
+  res.json(projectRows.map(p =>
     mapProject(
       p,
       versions.filter(v => Number(v.project_id) === Number(p.id)),
@@ -78,33 +106,33 @@ router.get("/projects", async (_req, res) => {
   ));
 });
 
-// POST /api/projects
-router.post("/projects", async (req, res) => {
-  const { code, name, startDate, endDate, currency, status } = req.body;
+// POST /api/projects — PMO/DCL only
+router.post("/projects", requirePmoOrDcl, async (req, res) => {
+  const { code, name, startDate, endDate, currency, status, lineId } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO projects (code, name, start_date, end_date, currency, status)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [code ?? "", name ?? "", startDate ?? "", endDate ?? "", currency ?? "USD", status ?? "active"]
+    `INSERT INTO projects (code, name, start_date, end_date, currency, status, line_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [code ?? "", name ?? "", startDate ?? "", endDate ?? "", currency ?? "USD", status ?? "active", lineId ?? null]
   );
   res.status(201).json(mapProject(rows[0], [], []));
 });
 
-// PATCH /api/projects/:id
-router.patch("/projects/:id", async (req, res) => {
-  const { code, name, startDate, endDate, currency, status } = req.body;
+// PATCH /api/projects/:id — PMO/DCL only
+router.patch("/projects/:id", requirePmoOrDcl, async (req, res) => {
+  const { code, name, startDate, endDate, currency, status, lineId } = req.body;
   const { rows } = await pool.query(
     `UPDATE projects SET code=$1, name=$2, start_date=$3, end_date=$4,
-       currency=$5, status=$6, updated_at=NOW() WHERE id=$7 RETURNING *`,
-    [code ?? "", name ?? "", startDate ?? "", endDate ?? "", currency ?? "USD", status ?? "active", req.params.id]
+       currency=$5, status=$6, line_id=$7, updated_at=NOW() WHERE id=$8 RETURNING *`,
+    [code ?? "", name ?? "", startDate ?? "", endDate ?? "", currency ?? "USD", status ?? "active", lineId ?? null, req.params.id]
   );
   if (!rows[0]) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ id: Number(rows[0].id), code: rows[0].code, name: rows[0].name,
     startDate: rows[0].start_date, endDate: rows[0].end_date,
-    currency: rows[0].currency, status: rows[0].status });
+    currency: rows[0].currency, status: rows[0].status, lineId: rows[0].line_id ? Number(rows[0].line_id) : null });
 });
 
-// DELETE /api/projects/:id
-router.delete("/projects/:id", async (req, res) => {
+// DELETE /api/projects/:id — PMO/DCL only
+router.delete("/projects/:id", requirePmoOrDcl, async (req, res) => {
   await pool.query("DELETE FROM projects WHERE id=$1", [req.params.id]);
   res.status(204).send();
 });

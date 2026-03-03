@@ -10,10 +10,12 @@ interface ProjectListScreenProps {
   projects: Project[];
   onReload: () => Promise<void>;
   onOpenProject: (id: number) => void;
+  canImport?: boolean;
+  onImport?: () => void;
   t: TranslationType;
 }
 
-export const ProjectListScreen = ({ projects, onReload, onOpenProject, t }: ProjectListScreenProps) => {
+export const ProjectListScreen = ({ projects, onReload, onOpenProject, canImport, onImport, t }: ProjectListScreenProps) => {
   const [showAdd, setShowAdd] = useState(false);
   const [np, setNp] = useState(defProject());
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
@@ -63,7 +65,12 @@ export const ProjectListScreen = ({ projects, onReload, onOpenProject, t }: Proj
       )}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-white">{t.projectList}</h2>
-        <button onClick={() => setShowAdd(true)} className="px-4 py-2 bg-indigo-700 rounded-lg text-sm">+ {t.addProject}</button>
+        <div className="flex gap-2">
+          {canImport && onImport && (
+            <button onClick={onImport} className="px-4 py-2 bg-green-800 hover:bg-green-700 rounded-lg text-sm">📥 {t.importFromExcel}</button>
+          )}
+          <button onClick={() => setShowAdd(true)} className="px-4 py-2 bg-indigo-700 rounded-lg text-sm">+ {t.addProject}</button>
+        </div>
       </div>
       {showAdd && (
         <Card title={t.addProject} className="mb-6">

@@ -1,5 +1,42 @@
 // All shared TypeScript interfaces for P&L Simulation Tool
 
+// ─── Auth / RBAC ─────────────────────────────────────────────────────────────
+
+export type AppRole = "pm" | "sm" | "pmo" | "dcl";
+
+export interface AppUser {
+  email: string;
+  displayName: string;
+  role: AppRole;
+}
+
+export interface ManagedUser {
+  id: number;
+  email: string;
+  displayName: string;
+  role: AppRole;
+  active: boolean;
+  createdAt: string;
+  assignedProjectIds: number[];
+  assignedLineIds: number[];
+}
+
+export interface Line {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface ProjectImportRow {
+  code?: string;
+  name?: string;
+  startDate?: string;
+  endDate?: string;
+  currency?: string;
+  status?: string;
+  lineCode?: string;
+}
+
 export interface Location {
   code: string;
   name: { vi: string; en: string };
@@ -99,6 +136,7 @@ export interface Project {
   endDate: string;
   currency: string;
   status: string;
+  lineId?: number | null;
   versions: Version[];
   actualData: { prime: ActualEntry[]; supplier: ActualEntry[] };
 }

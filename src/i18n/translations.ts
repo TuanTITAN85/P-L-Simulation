@@ -52,6 +52,9 @@ export const T = {
     metric:"Chỉ số",increase:"Tăng",decrease:"Giảm",noChange:"Không đổi",
     comparisonResult:"Kết quả so sánh",selectBothVersions:"Vui lòng chọn cả 2 phiên bản để so sánh",
     planning:"Planning",forecast:"Forecast",phase:"Giai đoạn",
+    login:"Đăng nhập",loginWithO365:"Đăng nhập bằng Microsoft",logout:"Đăng xuất",
+    permissions:"Phân quyền",userMgmt:"Người dùng",lineMgmt:"Line",assignments:"Phân công",
+    importFromExcel:"Import từ Excel",
   },
   en: {
     appTitle:"P&L Simulation Tool",admin:"Admin",projects:"Projects",
@@ -106,6 +109,9 @@ export const T = {
     metric:"Metric",increase:"Increase",decrease:"Decrease",noChange:"No Change",
     comparisonResult:"Comparison Result",selectBothVersions:"Please select both versions to compare",
     planning:"Planning",forecast:"Forecast",phase:"Phase",
+    login:"Login",loginWithO365:"Sign in with Microsoft",logout:"Sign Out",
+    permissions:"Permissions",userMgmt:"Users",lineMgmt:"Lines",assignments:"Assignments",
+    importFromExcel:"Import from Excel",
   },
 };
 

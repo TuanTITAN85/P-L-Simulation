@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
+import { requirePmoOrDcl } from "../middleware/auth";
 
 const router = Router();
 
@@ -101,8 +102,8 @@ router.get("/admin", async (_req, res) => {
   res.json(mapAdmin(rows[0]));
 });
 
-// PUT /api/admin  — full upsert
-router.put("/admin", async (req, res) => {
+// PUT /api/admin  — full upsert (PMO/DCL only)
+router.put("/admin", requirePmoOrDcl, async (req, res) => {
   const c = req.body;
   const { rows } = await pool.query(
     `INSERT INTO admin_config
