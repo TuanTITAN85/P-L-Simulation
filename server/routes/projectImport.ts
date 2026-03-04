@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
-import { requirePmoOrDcl } from "../middleware/auth";
+import { requireRole } from "../middleware/auth";
 
 const router = Router();
 
@@ -16,7 +16,7 @@ interface ProjectImportRow {
 
 // POST /api/projects/import — batch upsert projects from Excel (PMO/DCL only)
 // Frontend parses the Excel file and sends pre-mapped rows.
-router.post("/projects/import", requirePmoOrDcl, async (req, res) => {
+router.post("/projects/import", requireRole(["PMO", "DCL"]), async (req, res) => {
   const { rows } = req.body as { rows: ProjectImportRow[] };
   if (!Array.isArray(rows) || rows.length === 0) {
     res.status(400).json({ error: "rows array là bắt buộc" });

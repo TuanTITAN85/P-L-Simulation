@@ -21,9 +21,10 @@ interface PhasePanelProps {
   updField: (phaseKey: string, field: string, val: unknown) => void;
   admin: AdminConfig;
   t: TranslationType;
+  readOnly?: boolean;
 }
 
-export const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData, updSec, updField, admin, t }: PhasePanelProps) => {
+export const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actualData, updSec, updField, admin, t, readOnly = false }: PhasePanelProps) => {
   const [tab, setTab] = useState("info");
   const locs = admin.locations || DEFAULT_LOCS;
   const tgt_g = admin.targetGrossMargin || 40;
@@ -94,6 +95,7 @@ export const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actu
   return (
     <div>
       {isForecast && <div className="mb-4 px-4 py-3 bg-blue-950 border border-blue-800 rounded-xl text-xs text-blue-300">ℹ️ {t.forecastNote}</div>}
+      {/* Tab bar is always interactive even in readOnly mode */}
       <div className="flex gap-1 mb-4 overflow-x-auto bg-gray-800 rounded-xl p-1">
         {tabs.map(tb => (
           <button key={tb.key} onClick={() => setTab(tb.key)}
@@ -102,6 +104,8 @@ export const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actu
           </button>
         ))}
       </div>
+      {/* Content area: pointer-events disabled when readOnly */}
+      <div className={readOnly ? "pointer-events-none select-none" : ""}>
       {tab === "info" && (
         <div className="space-y-4">
           <div className="bg-gray-800 rounded-xl p-4">
@@ -143,6 +147,7 @@ export const PhasePanel = ({ phaseKey, phaseData, pl, isForecast, planData, actu
       {tab === "onsite" && <OnsiteSection phaseKey={phaseKey} phaseData={phaseData} pl={pl} updField={updField} t={t} />}
       {tab === "other" && <OtherCostsTab items={phaseData?.otherCosts || []} onChange={items => updField(phaseKey, "otherCosts", items)} cats={cats} t={t} />}
       {tab === "pl" && <PLSummary pl={pl} combinedMetrics={combinedMetrics} isForecast={isForecast} tgt_g={tgt_g} tgt_d={tgt_d} currency={currency} t={t} />}
+      </div>{/* end readOnly wrapper */}
     </div>
   );
 };

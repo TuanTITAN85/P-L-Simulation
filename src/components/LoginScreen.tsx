@@ -2,24 +2,30 @@ import { useState } from "react";
 import { useUser } from "../context/UserContext";
 import type { TranslationType } from "../i18n/translations";
 
-interface LoginScreenProps {
-  t: TranslationType;
-}
+interface LoginScreenProps { t: TranslationType; }
 
 export const LoginScreen = ({ t }: LoginScreenProps) => {
-  const { login, localLogin, error } = useUser();
-  const [localEmail, setLocalEmail] = useState("");
-  const [localPassword, setLocalPassword] = useState("");
+  const { login, localLogin, mockSSOLogin, error } = useUser();
+  const [username, setUsername]       = useState("");
+  const [password, setPassword]       = useState("");
   const [localLoading, setLocalLoading] = useState(false);
+  const [mockEmail, setMockEmail]     = useState("");
+  const [mockLoading, setMockLoading] = useState(false);
+  const [showMock, setShowMock]       = useState(false);
 
-  const handleLocalSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const isDev = import.meta.env.DEV;
+
+  const handleLocalSubmit = async () => {
     setLocalLoading(true);
-    try {
-      await localLogin(localEmail, localPassword);
-    } finally {
-      setLocalLoading(false);
-    }
+    try { await localLogin(username, password); }
+    finally { setLocalLoading(false); }
+  };
+
+  const handleMockSSO = async () => {
+    if (!mockEmail.trim()) return;
+    setMockLoading(true);
+    try { await mockSSOLogin(mockEmail.trim()); }
+    finally { setMockLoading(false); }
   };
 
   return (
@@ -48,7 +54,7 @@ export const LoginScreen = ({ t }: LoginScreenProps) => {
             <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
             <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
           </svg>
-          {t.loginWithO365}
+          {t.loginWithO365Company}
         </button>
 
         {/* Divider */}
@@ -59,24 +65,24 @@ export const LoginScreen = ({ t }: LoginScreenProps) => {
         </div>
 
         {/* Local credentials form */}
-        <form onSubmit={e => void handleLocalSubmit(e)} className="w-full flex flex-col gap-3">
+        <form onSubmit={e => { e.preventDefault(); void handleLocalSubmit(); }} className="w-full flex flex-col gap-3">
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Tên đăng nhập</label>
             <input
               type="text"
-              value={localEmail}
-              onChange={e => setLocalEmail(e.target.value)}
+              value={username}
+              onChange={e => setUsername(e.target.value)}
               placeholder="admin"
               autoComplete="username"
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"
             />
           </div>
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Mật khẩu</label>
+            <label className="text-xs text-gray-500 mb-1 block">{t.password}</label>
             <input
               type="password"
-              value={localPassword}
-              onChange={e => setLocalPassword(e.target.value)}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
               placeholder="••••••••"
               autoComplete="current-password"
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"
@@ -84,12 +90,42 @@ export const LoginScreen = ({ t }: LoginScreenProps) => {
           </div>
           <button
             type="submit"
-            disabled={localLoading || !localEmail || !localPassword}
+            disabled={localLoading || !username || !password}
             className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-xl text-white font-medium text-sm transition"
           >
             {localLoading ? "Đang đăng nhập..." : t.login}
           </button>
         </form>
+
+        {/* Mock SSO (dev only) */}
+        {isDev && (
+          <div className="w-full">
+            <button
+              onClick={() => setShowMock(v => !v)}
+              className="text-xs text-gray-600 hover:text-gray-400 w-full text-left"
+            >
+              🛠 {showMock ? "▲" : "▼"} {t.mockSsoEmail}
+            </button>
+            {showMock && (
+              <form onSubmit={e => { e.preventDefault(); void handleMockSSO(); }} className="mt-2 flex gap-2">
+                <input
+                  type="email"
+                  value={mockEmail}
+                  onChange={e => setMockEmail(e.target.value)}
+                  placeholder="user@fpt.com"
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="submit"
+                  disabled={mockLoading || !mockEmail}
+                  className="px-3 py-1.5 bg-amber-800 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-xs text-white transition"
+                >
+                  {mockLoading ? "…" : "Go"}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

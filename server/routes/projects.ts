@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db";
 import { requirePmoOrDcl } from "../middleware/auth";
+import { calcDirectCostFromRows } from "../utils/actualData";
 
 const router = Router();
 
@@ -20,6 +21,7 @@ function mapVersion(v: any) {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapActualEntry(a: any) {
+  const rows: Record<string, string>[] = typeof a.rows === "string" ? JSON.parse(a.rows) : (a.rows || []);
   return {
     id: Number(a.id),
     month: a.month,
@@ -29,9 +31,9 @@ function mapActualEntry(a: any) {
     offshoreActualMM: Number(a.offshore_actual_mm),
     onsiteActualMM: Number(a.onsite_actual_mm),
     actualRevenue: Number(a.actual_revenue),
-    actualDirectCost: Number(a.actual_direct_cost),
+    actualDirectCost: calcDirectCostFromRows(rows),
     calendarEffort: Number(a.calendar_effort),
-    rows: typeof a.rows === "string" ? JSON.parse(a.rows) : (a.rows || []),
+    rows,
   };
 }
 
@@ -168,18 +170,23 @@ router.post("/projects/:id/actual/:tab", async (req, res) => {
     actualRevenue, actualDirectCost, calendarEffort,
     rows: dataRows,
   } = req.body;
+  // Lookup project_code so actual_entries always has it set
+  const { rows: projRows } = await pool.query(
+    `SELECT code FROM projects WHERE id = $1`, [req.params.id]
+  );
+  const projectCode = (projRows[0]?.code as string | undefined) ?? null;
   const { rows } = await pool.query(
     `INSERT INTO actual_entries
-       (project_id, tab, month, imported_at, file_name, selected_codes,
-        offshore_actual_mm, onsite_actual_mm, actual_revenue, actual_direct_cost,
+       (project_id, project_code, tab, month, imported_at, file_name, selected_codes,
+        offshore_actual_mm, onsite_actual_mm, actual_revenue,
         calendar_effort, rows)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [
-      req.params.id, tab,
+      req.params.id, projectCode, tab,
       month ?? "", importedAt ?? "", fileName ?? "",
       selectedCodes ?? [],
       offshoreActualMM ?? 0, onsiteActualMM ?? 0,
-      actualRevenue ?? 0, actualDirectCost ?? 0, calendarEffort ?? 0,
+      actualRevenue ?? 0, calendarEffort ?? 0,
       JSON.stringify(dataRows ?? []),
     ]
   );

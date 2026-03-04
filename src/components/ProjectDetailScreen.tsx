@@ -77,7 +77,7 @@ export const ProjectDetailScreen = ({ project, onReload, onOpenSim, onOpenCompar
           <div className="flex items-start justify-between mb-3">
             <div>
               <h2 className="text-xl font-bold text-white">{project.name || "—"}</h2>
-              <p className="text-sm text-gray-500">{project.code} · {project.startDate || "?"} → {project.endDate || "?"}</p>
+              <p className="text-sm text-gray-500">{project.code} · {project.startDate ? project.startDate.slice(0, 10) : "?"} → {project.endDate ? project.endDate.slice(0, 10) : "?"}</p>
               <Badge label={({ active: t.active, completed: t.completed, onHold: t.onHold }[project.status] || project.status)} color={project.status === "active" ? "green" : "yellow"} />
             </div>
             <button onClick={startEditProject} className="px-3 py-1.5 bg-gray-700 rounded-lg text-sm">✏️ {t.editProject}</button>
